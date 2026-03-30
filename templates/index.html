@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaScope</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Space+Grotesk:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+</head>
+<body data-theme="dark">
+    <div class="backdrop-grid"></div>
+
+    <div id="marketOverlay" class="market-overlay">
+        <div class="overlay-card">
+            <p class="eyebrow">Choose Your Market First</p>
+            <h1>Start With The Market You Want To Analyze</h1>
+            <p class="hero-copy">Pick a market lane and the terminal will load the right default asset, feed, and context.</p>
+            <div class="market-selector-grid">
+                <button class="market-choice" data-market="crypto" data-symbol="BTC-USD">
+                    <span class="choice-label">Crypto</span>
+                    <strong>Bitcoin, Ethereum, Solana</strong>
+                </button>
+                <button class="market-choice" data-market="india" data-symbol="TCS.NS">
+                    <span class="choice-label">Indian Stocks</span>
+                    <strong>TCS, Reliance, Infosys</strong>
+                </button>
+                <button class="market-choice" data-market="us" data-symbol="AAPL">
+                    <span class="choice-label">US Stocks</span>
+                    <strong>Apple, NVIDIA, Microsoft</strong>
+                </button>
+                <button class="market-choice" data-market="forex" data-symbol="USDINR=X">
+                    <span class="choice-label">Forex</span>
+                    <strong>USD/INR, EUR/USD, GBP/USD</strong>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <button id="portfolioLauncher" class="portfolio-launcher" type="button" aria-label="Open portfolio">
+        <span class="launcher-icon">◎</span>
+        <span>Portfolio</span>
+    </button>
+
+    <aside id="portfolioDrawer" class="portfolio-drawer" tabindex="-1">
+        <div class="portfolio-drawer-inner glass-panel">
+            <div class="section-header">
+                <div>
+                    <p class="eyebrow">Portfolio Workspace</p>
+                    <h3>Your Holdings Hub</h3>
+                </div>
+                <button id="closePortfolio" class="theme-toggle" type="button">Close</button>
+            </div>
+
+            <form id="portfolioForm" class="portfolio-form">
+                <input id="portfolioSymbol" type="text" placeholder="Asset symbol">
+                <input id="portfolioQuantity" type="number" min="0.01" step="0.01" placeholder="Quantity">
+                <button class="primary-button" type="submit">Add</button>
+            </form>
+
+            <div class="portfolio-toolbar">
+                <button id="portfolioRefresh" class="market-tab active" type="button">Refresh</button>
+                <button id="portfolioPredict" class="market-tab" type="button">Predict</button>
+            </div>
+
+            <div class="portfolio-summary">
+                <article class="glass-inner summary-card">
+                    <span>Total Investment</span>
+                    <strong id="totalInvestment">--</strong>
+                </article>
+                <article class="glass-inner summary-card">
+                    <span>Current Value</span>
+                    <strong id="currentValue">--</strong>
+                </article>
+                <article class="glass-inner summary-card">
+                    <span>Profit / Loss</span>
+                    <strong id="profitLoss">--</strong>
+                </article>
+            </div>
+
+            <article id="portfolioPredictionBox" class="portfolio-prediction glass-inner">
+                <span>Portfolio Prediction</span>
+                <strong id="portfolioPredictionRisk">--</strong>
+                <p id="portfolioPredictionText">Request a prediction to get an overall portfolio read.</p>
+                <p id="portfolioPredictionAction" class="muted-line">Suggested action will appear here.</p>
+            </article>
+
+            <div id="portfolioList" class="portfolio-list"></div>
+        </div>
+    </aside>
+
+    <div class="app-shell">
+        <header class="topbar glass-panel">
+            <div class="brand-block">
+                <p class="eyebrow">AlphaScope</p>
+                <h2>Professional Multi-Market Insight Terminal</h2>
+                <p class="hero-copy">Live stocks, crypto, forex, explainable trends, and news-aware AI summaries built for real decision support.</p>
+            </div>
+            <div class="topbar-actions">
+                <div class="live-status">
+                    <span class="live-dot"></span>
+                    <span id="statusMessage">Waiting for your market selection.</span>
+                </div>
+                <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+                    <span id="themeLabel">Dark</span>
+                </button>
+            </div>
+        </header>
+
+        <section class="ticker-board glass-panel">
+            <div class="section-header">
+                <div>
+                    <p class="eyebrow">Moving Rail</p>
+                    <h3>Live Global Tape</h3>
+                </div>
+                <div class="header-pills">
+                    <span class="pill">Crypto</span>
+                    <span class="pill">India</span>
+                    <span class="pill">US</span>
+                    <span class="pill">Forex</span>
+                </div>
+            </div>
+            <div class="ticker-row">
+                <div id="tickerRowTop" class="ticker-track"></div>
+            </div>
+            <div class="ticker-row ticker-row-reverse">
+                <div id="tickerRowBottom" class="ticker-track"></div>
+            </div>
+        </section>
+
+        <main class="dashboard-grid">
+            <section class="analysis-panel glass-panel">
+                <div class="analysis-head">
+                    <div>
+                        <p class="eyebrow">Analysis Workspace</p>
+                        <h2 id="stockName">{{ default_symbol }}</h2>
+                        <div class="sub-meta">
+                            <span id="assetMarketChip" class="pill accent">US</span>
+                            <span id="heroExchange" class="sub-chip">NASDAQ</span>
+                            <span id="updateBadge" class="sub-chip">Waiting</span>
+                        </div>
+                    </div>
+                    <div class="market-tabs">
+                        <button class="market-tab active" data-market="us" data-symbol="AAPL">US</button>
+                        <button class="market-tab" data-market="india" data-symbol="TCS.NS">India</button>
+                        <button class="market-tab" data-market="crypto" data-symbol="BTC-USD">Crypto</button>
+                        <button class="market-tab" data-market="forex" data-symbol="USDINR=X">Forex</button>
+                    </div>
+                </div>
+
+                <form id="symbolForm" class="control-row">
+                    <div class="input-stack">
+                        <label for="symbolInput">Symbol or Pair</label>
+                        <input id="symbolInput" name="symbol" type="text" value="{{ default_symbol }}" placeholder="AAPL, TCS, BTC, USDINR, EURUSD">
+                    </div>
+                    <button class="primary-button" type="submit">Analyze</button>
+                </form>
+
+                <div class="range-toolbar">
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">Timeline</span>
+                        <div class="segmented-control">
+                            <button class="range-btn" data-range="hour">Hour</button>
+                            <button class="range-btn active" data-range="day">Day</button>
+                            <button class="range-btn" data-range="week">Week</button>
+                            <button class="range-btn" data-range="month">Month</button>
+                            <button class="range-btn" data-range="year">Year</button>
+                        </div>
+                    </div>
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">Chart Type</span>
+                        <div class="segmented-control">
+                            <button class="chart-btn active" data-chart="line">Line</button>
+                            <button class="chart-btn" data-chart="candlestick">Candles</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metric-grid">
+                    <article class="metric-card glass-inner">
+                        <span>Live Price</span>
+                        <strong id="stockPrice">--</strong>
+                    </article>
+                    <article class="metric-card glass-inner">
+                        <span>Move</span>
+                        <strong id="stockChange">--</strong>
+                    </article>
+                    <article class="metric-card glass-inner">
+                        <span>Risk</span>
+                        <strong id="riskLevel">--</strong>
+                    </article>
+                    <article class="metric-card glass-inner">
+                        <span>Currency</span>
+                        <strong id="currencyLabel">--</strong>
+                    </article>
+                </div>
+
+                <div class="trend-grid">
+                    <article class="trend-card glass-inner">
+                        <span>Momentum</span>
+                        <strong id="trendMomentum">--</strong>
+                    </article>
+                    <article class="trend-card glass-inner">
+                        <span>Control</span>
+                        <strong id="trendSignal">--</strong>
+                    </article>
+                    <article class="trend-card glass-inner">
+                        <span>Trend Health</span>
+                        <strong id="trendHealth">--</strong>
+                    </article>
+                    <article class="trend-card glass-inner">
+                        <span>Market</span>
+                        <strong id="heroMarket">US</strong>
+                    </article>
+                </div>
+            </section>
+
+            <section class="chart-panel glass-panel">
+                <div class="section-header">
+                    <div>
+                        <p class="eyebrow">Chart Station</p>
+                        <h3>Price Action</h3>
+                    </div>
+                    <span class="pill">Auto Refresh 5s</span>
+                </div>
+                <canvas id="stockChart"></canvas>
+            </section>
+
+            <section class="insight-panel glass-panel">
+                <div class="section-header">
+                    <div>
+                        <p class="eyebrow">AI Insight</p>
+                        <h3>What Is Happening + Why</h3>
+                    </div>
+                    <span id="insightSource" class="pill">Waiting</span>
+                </div>
+                <p id="insightText" class="insight-copy">Choose a market to begin analysis.</p>
+                <div class="insight-meta">
+                    <article class="glass-inner insight-box">
+                        <span>Risk Level</span>
+                        <strong id="insightRisk">--</strong>
+                    </article>
+                    <article class="glass-inner insight-box">
+                        <span>Beginner Tip</span>
+                        <strong id="beginnerTip">Observe first, then decide.</strong>
+                    </article>
+                </div>
+            </section>
+
+            <section class="news-panel glass-panel">
+                <div class="section-header">
+                    <div>
+                        <p class="eyebrow">Headline Context</p>
+                        <h3>News + Sentiment</h3>
+                    </div>
+                </div>
+                <div id="newsList" class="news-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        window.APP_CONFIG = { defaultSymbol: "{{ default_symbol }}" };
+    </script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
