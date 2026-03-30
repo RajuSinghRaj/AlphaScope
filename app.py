@@ -15,7 +15,7 @@ from flask import Flask, jsonify, render_template, request
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_DIR = BASE_DIR / "database"
-DB_PATH = DB_DIR / "db.sqlite3"
+DB_PATH = Path("/tmp/db.sqlite3") if os.getenv("VERCEL") else DB_DIR / "db.sqlite3"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_SYMBOL = "AAPL"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"

@@ -61,3 +61,25 @@ This project includes a `render.yaml` and uses `gunicorn`.
 - The SQLite database is fine for local use and light demos.
 - For serious production use, switch from SQLite to Postgres.
 - If Ollama is not running in the deployed environment, AlphaScope will use fallback logic for AI summaries.
+
+## Deploy on Vercel
+
+This repo now includes:
+
+- `api/index.py`
+- `vercel.json`
+
+### Vercel steps
+
+1. Import the GitHub repo into Vercel.
+2. Keep the default project settings.
+3. Deploy.
+
+### Important Vercel notes
+
+- Vercel runs this Flask app as a serverless Python function.
+- Ollama will not be available on Vercel, so AlphaScope will use fallback insight logic unless you later add a cloud LLM.
+- SQLite is not persistent on Vercel. For compatibility, the app uses `/tmp/db.sqlite3` there.
+- That means portfolio data on Vercel is temporary and may reset between deployments or cold starts.
+
+For serious hosted usage, switch portfolio storage to Postgres/Supabase/Neon.
