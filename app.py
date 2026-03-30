@@ -219,6 +219,100 @@ def determine_risk(change_percent: float, trend: list[float]) -> str:
     return "High"
 
 
+def detect_market_pattern(trend: list[float], change_percent: float) -> str:
+    if len(trend) < 5:
+        return "trend"
+
+    recent = trend[-5:]
+    high = max(recent)
+    low = min(recent)
+    spread = high - low
+    baseline = max(abs(recent[-1]), 1)
+    spread_ratio = spread / baseline * 100
+
+    first_half = recent[:2]
+    second_half = recent[-2:]
+    first_avg = sum(first_half) / len(first_half)
+    second_avg = sum(second_half) / len(second_half)
+
+    if spread_ratio < 0.8:
+        return "consolidation"
+    if change_percent > 1.2 and second_avg > first_avg:
+        return "breakout"
+    if change_percent < -1.2 and second_avg < first_avg:
+        return "breakdown"
+    if change_percent > 0 and recent[-1] > recent[-2] < recent[-3]:
+        return "recovery"
+    if change_percent < 0 and recent[-1] < recent[-2] > recent[-3]:
+        return "pullback"
+    return "trend"
+
+
+def build_beginner_tip(
+    market: str,
+    news_bias: str,
+    risk_level: str,
+    pattern: str,
+    trend_up: bool,
+    volatility_ratio: float,
+) -> str:
+    tips: list[str] = []
+
+    market_specific = {
+        "Crypto": [
+            "Crypto can move sharply without warning, so confirmation matters more than speed.",
+            "In crypto, avoid chasing fast candles and wait for the move to prove it can hold.",
+        ],
+        "Forex": [
+            "Forex moves often follow macro themes, so steady direction usually matters more than one spike.",
+            "For currency pairs, focus on whether the move stays consistent rather than reacting to every small swing.",
+        ],
+        "India": [
+            "For Indian stocks, it helps to compare the move with the broader market before treating it as a strong signal.",
+            "In Indian equities, follow-through after the opening move is often more important than the first reaction.",
+        ],
+        "US": [
+            "For US stocks, check whether the move is market-wide or specific to that company before acting.",
+            "In US equities, waiting for confirmation after the first move can reduce rushed decisions.",
+        ],
+    }
+    tips.extend(market_specific.get(market, market_specific["US"]))
+
+    pattern_specific = {
+        "breakout": "A breakout is stronger when price holds above the old range instead of slipping back quickly.",
+        "breakdown": "A breakdown deserves caution until buyers show they can rebuild support.",
+        "consolidation": "Consolidation usually means the market is deciding direction, so patience can be more useful than guessing.",
+        "recovery": "A recovery looks healthier when each bounce creates a slightly higher floor.",
+        "pullback": "A pullback is easier to trust if sellers slow down near a clear support area.",
+        "trend": "A trend becomes easier to trust when the market keeps respecting the same direction over multiple candles.",
+    }
+    tips.append(pattern_specific.get(pattern, pattern_specific["trend"]))
+
+    if news_bias == "Positive":
+        tips.append("When headlines and price both lean positive, the move is usually easier to trust.")
+    elif news_bias == "Negative":
+        tips.append("If headlines stay negative, avoid assuming every dip is a quick rebound.")
+    else:
+        tips.append("When headlines are neutral, price action itself becomes the better guide.")
+
+    if volatility_ratio > 6:
+        tips.append("This move is volatile, so focus on risk first and avoid chasing candles.")
+    elif volatility_ratio < 2:
+        tips.append("This trend looks steadier, so consistency may matter more than reacting quickly.")
+
+    if trend_up:
+        tips.append("A healthy rise usually keeps making higher lows, even after short pauses.")
+    else:
+        tips.append("A weak trend often keeps making lower highs, so watch whether selling pressure is fading.")
+
+    if risk_level == "High":
+        tips.append("High-risk setups are often better for observation than aggressive entries when you are still learning.")
+    elif risk_level == "Low":
+        tips.append("Lower-risk setups still need discipline, but they usually give beginners more time to think clearly.")
+
+    return tips[int((volatility_ratio + len(pattern) + len(market)) % len(tips))]
+
+
 def derive_sentiment(text: str) -> str:
     lower_text = text.lower()
     positive_score = sum(word in lower_text for word in POSITIVE_WORDS)
@@ -289,8 +383,24 @@ def generate_rule_based_insight(
     baseline = max(abs(trend[-1]), 1) if trend else 1
     volatility_ratio = spread / baseline * 100
     trend_up = len(trend) >= 2 and trend[-1] >= trend[0]
+    pattern = detect_market_pattern(trend, change)
 
-    if change >= 0:
+    if pattern == "breakout":
+        summary = (
+            f"{market} price is pushing through a recent range near {price:.2f}, which suggests a possible breakout. "
+            f"Headline tone is {news_bias.lower()}, so confidence may be helping traders extend the move."
+        )
+    elif pattern == "breakdown":
+        summary = (
+            f"{market} price is slipping below a recent range near {price:.2f}, which points to a possible breakdown. "
+            f"Headline tone is {news_bias.lower()}, so caution may still be weighing on sentiment."
+        )
+    elif pattern == "consolidation":
+        summary = (
+            f"{market} price is moving in a relatively tight band near {price:.2f}, so the market looks to be consolidating. "
+            f"Headline tone is {news_bias.lower()}, and traders may be waiting for a clearer direction."
+        )
+    elif change >= 0:
         summary = (
             f"{market} buyers are in control near {price:.2f}, and the latest move still has upward momentum. "
             f"Headline tone is {news_bias.lower()}, which helps explain why confidence may be supporting price."
@@ -300,61 +410,7 @@ def generate_rule_based_insight(
             f"{market} sellers are controlling the move near {price:.2f}, so short-term momentum is weaker. "
             f"Headline tone is {news_bias.lower()}, which may be reinforcing trader caution."
         )
-
-    tip_candidates: list[str] = []
-
-    if market == "Crypto":
-        tip_candidates.extend(
-            [
-                "Crypto moves fast, so small position sizes and patience usually matter more than speed.",
-                "In crypto, wait for momentum and volume to agree before treating a move as real.",
-            ]
-        )
-    elif market == "Forex":
-        tip_candidates.extend(
-            [
-                "Forex pairs often react to macro news, so watch whether the move follows a larger currency theme.",
-                "In forex, stable trends usually matter more than one sharp candle.",
-            ]
-        )
-    elif market == "India":
-        tip_candidates.extend(
-            [
-                "For Indian stocks, compare the move with broader market tone before making a decision.",
-                "In Indian equities, it helps to watch whether follow-through holds after the opening move.",
-            ]
-        )
-    else:
-        tip_candidates.extend(
-            [
-                "For US stocks, check whether the move is broad market driven or specific to the company.",
-                "In US equities, waiting for confirmation after the first move can reduce rushed decisions.",
-            ]
-        )
-
-    if news_bias == "Positive":
-        tip_candidates.append("When headlines and price both lean positive, the move is usually easier to trust.")
-    elif news_bias == "Negative":
-        tip_candidates.append("If headlines stay negative, avoid assuming every dip is a quick rebound.")
-    else:
-        tip_candidates.append("When headlines are neutral, price action itself becomes the better guide.")
-
-    if volatility_ratio > 6:
-        tip_candidates.append("This move is volatile, so focus on risk first and avoid chasing candles.")
-    elif volatility_ratio < 2:
-        tip_candidates.append("This trend looks steadier, so watching consistency may be more useful than reacting fast.")
-
-    if trend_up and change >= 0:
-        tip_candidates.append("A rising trend is healthier when pullbacks stay shallow and buyers return quickly.")
-    elif not trend_up and change < 0:
-        tip_candidates.append("A falling trend deserves caution until the asset starts building support instead of drifting lower.")
-
-    if risk_level == "High":
-        tip_candidates.append("High-risk setups are usually better for observation than aggressive entries if you are still learning.")
-    elif risk_level == "Low":
-        tip_candidates.append("Lower-risk setups can still fail, but they usually give beginners more time to think clearly.")
-
-    beginner_tip = tip_candidates[int(abs(change) + volatility_ratio) % len(tip_candidates)]
+    beginner_tip = build_beginner_tip(market, news_bias, risk_level, pattern, trend_up, volatility_ratio)
 
     return {
         "summary": summary,
