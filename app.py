@@ -248,80 +248,72 @@ def session_digest(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
 
 
-def ensure_guest_account(connection: sqlite3.Connection) -> tuple[str, str]:
-    user_id = str(uuid.uuid4())
-    account_id = str(uuid.uuid4())
-    portfolio_id = str(uuid.uuid4())
-    watchlist_id = str(uuid.uuid4())
-    connection.execute("INSERT INTO users(id) VALUES (?)", (user_id,))
-    connection.execute("INSERT INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (account_id, user_id))
-    connection.execute("INSERT INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (portfolio_id, account_id))
-    connection.execute("INSERT INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (watchlist_id, account_id))
+SECRET_KEY = os.getenv("SECRET_KEY", "alphascope-production-secure-terminal-key-2026").encode("utf-8")
+
+def create_csrf_token(token: str) -> str:
+    sig = hashlib.sha256(SECRET_KEY + token.encode("ascii")).hexdigest()[:32]
+    return f"{token}.{sig}"
+
+def verify_csrf_token(candidate: str) -> tuple[bool, str | None]:
+    if not candidate or "." not in candidate:
+        return False, None
+    token, sig = candidate.split(".", 1)
+    if not (len(token) == 64 and all(c in "0123456789abcdefABCDEF" for c in token)):
+        return False, None
+    expected_sig = hashlib.sha256(SECRET_KEY + token.encode("ascii")).hexdigest()[:32]
+    if secrets.compare_digest(sig, expected_sig):
+        return True, token
+    return False, None
+
+def get_guest_user_and_account(token: str) -> tuple[str, str]:
+    user_id = str(uuid.UUID(bytes=hashlib.sha256(("user:" + token).encode("ascii")).digest()[:16]))
+    account_id = str(uuid.UUID(bytes=hashlib.sha256(("account:" + token).encode("ascii")).digest()[:16]))
     return user_id, account_id
 
 @app.before_request
 def load_auth_session() -> None:
     token = request.cookies.get(AUTH_COOKIE, "")
-    digest = session_digest(token) if re.fullmatch(r"[0-9a-f]{64}", token) else ""
-    now = datetime.now(timezone.utc)
+    if not (len(token) == 64 and all(c in "0123456789abcdefABCDEF" for c in token)):
+        token = ""
+    candidate_header = request.headers.get("X-CSRF-Token", "")
+    valid_signed, signed_token = verify_csrf_token(candidate_header)
+    if valid_signed and signed_token:
+        token = signed_token
+    if not token:
+        token = secrets.token_hex(32)
+        g.new_session_cookie = token
+    g.csrf_token = create_csrf_token(token)
+    g.user_id, g.account_id = get_guest_user_and_account(token)
+    g.session_hash = session_digest(token)
     with get_connection() as connection:
-        connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now.isoformat(),))
-        session_row = connection.execute(
-            "SELECT session_hash, user_id, csrf_token FROM auth_sessions WHERE session_hash = ? AND expires_at > ?",
-            (digest, now.isoformat()),
-        ).fetchone() if digest else None
-        if session_row is None:
-            token = secrets.token_hex(32)
-            digest = session_digest(token)
-            csrf = secrets.token_urlsafe(32)
-            user_id, account_id = ensure_guest_account(connection)
-            connection.execute("INSERT INTO auth_sessions VALUES (?, ?, ?, ?, ?)",
-                               (digest, user_id, csrf, now.isoformat(), (now + timedelta(seconds=AUTH_SESSION_SECONDS)).isoformat()))
-            connection.commit()
-            g.new_session_cookie = token
-            g.csrf_token = csrf
-            g.session_hash = digest
-            g.user_id = user_id
-            g.account_id = account_id
-        else:
-            g.session_hash = session_row["session_hash"]
-            g.csrf_token = session_row["csrf_token"]
-            g.user_id = session_row["user_id"]
-            if not g.user_id:
-                user_id, account_id = ensure_guest_account(connection)
-                connection.execute("UPDATE auth_sessions SET user_id = ? WHERE session_hash = ?", (user_id, g.session_hash))
-                connection.commit()
-                g.user_id = user_id
-                g.account_id = account_id
-            else:
-                row = connection.execute("SELECT id FROM accounts WHERE user_id = ? ORDER BY created_at LIMIT 1", (g.user_id,)).fetchone()
-                if row:
-                    g.account_id = row["id"]
-                else:
-                    account_id = str(uuid.uuid4())
-                    connection.execute("INSERT INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (account_id, g.user_id))
-                    connection.execute("INSERT INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (str(uuid.uuid4()), account_id))
-                    connection.execute("INSERT INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (str(uuid.uuid4()), account_id))
-                    connection.commit()
-                    g.account_id = account_id
-
+        connection.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (g.user_id,))
+        connection.execute("INSERT OR IGNORE INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (g.account_id, g.user_id))
+        connection.execute("INSERT OR IGNORE INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (g.account_id, g.account_id))
+        connection.execute("INSERT OR IGNORE INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (g.account_id, g.account_id))
+        connection.commit()
 
 @app.after_request
 def set_auth_cookie(response):
     token = getattr(g, "new_session_cookie", None)
     if token:
+        is_secure = bool(request.is_secure or (os.getenv("VERCEL") and request.headers.get("X-Forwarded-Proto") == "https"))
         response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_SESSION_SECONDS, httponly=True,
-                            secure=app.config["SESSION_COOKIE_SECURE"], samesite="Lax", path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
+                            secure=is_secure, samesite="Lax", path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
     if request.path.startswith(("/login", "/register", "/logout", "/auth", "/get_portfolio", "/add_stock", "/delete_stock", "/portfolio_predict", "/api/watchlist", "/api/orders")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
-
 def csrf_is_valid() -> bool:
     body = request.get_json(silent=True) or {}
     candidate = request.headers.get("X-CSRF-Token") or body.get("csrf_token") or request.form.get("csrf_token", "")
-    return bool(candidate and secrets.compare_digest(str(candidate), g.csrf_token))
-
+    if not candidate:
+        return False
+    valid, _ = verify_csrf_token(str(candidate))
+    if valid:
+        return True
+    if g.csrf_token and secrets.compare_digest(str(candidate), str(g.csrf_token)):
+        return True
+    return False
 
 def auth_error(message: str, status: int):
     if request.is_json:
