@@ -537,7 +537,7 @@ function renderPortfolio(portfolio) {
     elements.profitLoss.textContent = formatCurrency(summary.profit_loss, summary.currency || "USD");
     elements.profitLoss.className = toneClass(Number(summary.profit_loss));
     if (!holdings?.length) {
-        elements.portfolioList.innerHTML = '<p class="empty-state">No local holdings yet. Broker cash, equity, and buying power are unavailable.</p>';
+        elements.portfolioList.innerHTML = '<p class="empty-state">No holdings tracked yet. Add an asset symbol and quantity above to begin.</p>';
         return;
     }
     const table = document.createElement("table");
@@ -660,7 +660,7 @@ async function loadOrders() {
         const result = await response.json();
         if (!result.success) throw new Error("Order activity unavailable");
         if (!result.data.length) {
-            elements.orderRows.innerHTML = '<p class="empty-state">No order activity. Drafts and confirmed simulator entries appear here.</p>';
+            elements.orderRows.innerHTML = '<p class="empty-state">No simulated order activity yet. Use the trade ticket above to preview an order.</p>';
             return;
         }
         const table = document.createElement("table");

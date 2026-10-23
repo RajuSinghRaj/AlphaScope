@@ -1047,8 +1047,6 @@ def logout():
 
 @app.route("/")
 def index() -> str:
-    if not g.user_id:
-        return redirect("/login")
     market_socket_url = os.getenv("MARKET_WS_URL", "")
     if not market_socket_url and not (os.getenv("RENDER") or os.getenv("VERCEL")) and os.getenv("APCA_API_KEY_ID") and os.getenv("APCA_API_SECRET_KEY"):
         market_socket_url = "ws://localhost:8765"
@@ -1228,7 +1226,7 @@ def parse_trade_quantity(value: Any) -> Decimal:
 @app.get("/api/watchlist")
 def list_watchlist() -> Any:
     if not g.user_id or not g.account_id:
-        return jsonify({"success": False, "message": "Sign in to access your watchlist."}), 401
+        return jsonify({"success": True, "data": [], "limit": 30})
     with get_connection() as connection:
         watchlist_id = default_watchlist(connection, g.account_id)
         rows = connection.execute("SELECT i.symbol, i.asset_class, i.exchange, i.currency FROM watchlist_items w JOIN instruments i ON i.id = w.instrument_id WHERE w.watchlist_id = ? ORDER BY w.added_at DESC", (watchlist_id,)).fetchall()
@@ -1428,7 +1426,7 @@ def cancel_order(order_id: str) -> Any:
 @app.get("/api/orders")
 def order_history() -> Any:
     if not g.user_id or not g.account_id:
-        return jsonify({"success": False, "message": "Sign in to view order activity."}), 401
+        return jsonify({"success": True, "data": [], "events": []})
     with get_connection() as connection:
         rows = connection.execute("SELECT o.id, o.side, o.order_type, o.quantity, o.limit_price, o.status, o.provider, o.created_at, o.updated_at, o.preview_json, i.symbol, i.currency FROM orders o JOIN instruments i ON i.id = o.instrument_id WHERE o.account_id = ? ORDER BY o.created_at DESC LIMIT 100", (g.account_id,)).fetchall()
         events = connection.execute("SELECT order_id, status, detail, created_at FROM order_events WHERE account_id = ? ORDER BY created_at DESC LIMIT 200", (g.account_id,)).fetchall()
@@ -1444,7 +1442,7 @@ def order_history() -> Any:
 @app.route("/get_portfolio")
 def get_portfolio() -> Any:
     if not g.user_id or not g.account_id:
-        return jsonify({"success": False, "message": "Sign in to access your portfolio."}), 401
+        return jsonify({"success": True, "data": {"holdings": [], "summary": {"total_investment": None, "current_value": None, "profit_loss": None, "currency": None, "totals_by_currency": {}, "valuation_status": "guest", "cash_balance": None, "equity": None, "buying_power": None, "account_source": "Sign in to track your portfolio", "realized_pnl": None}}})
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT id, symbol, quantity, purchase_price, created_at, currency, asset_class FROM account_holdings WHERE account_id = ? ORDER BY created_at DESC",
