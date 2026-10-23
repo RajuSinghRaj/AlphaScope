@@ -1,6 +1,7 @@
+const urlParams = new URLSearchParams(window.location.search);
 const state = {
-    symbol: window.APP_CONFIG?.defaultSymbol || "AAPL",
-    market: "us",
+    symbol: (urlParams.get("symbol") || window.APP_CONFIG?.defaultSymbol || "AAPL").toUpperCase(),
+    market: (urlParams.get("market") || "us").toLowerCase(),
     range: "day",
     chartType: "line",
     chart: null,

@@ -1069,6 +1069,16 @@ def index() -> str:
     market_socket_url = os.getenv("MARKET_WS_URL", "")
     if not market_socket_url and not (os.getenv("RENDER") or os.getenv("VERCEL")) and os.getenv("APCA_API_KEY_ID") and os.getenv("APCA_API_SECRET_KEY"):
         market_socket_url = "ws://localhost:8765"
+    return render_template("landing.html", default_symbol=DEFAULT_SYMBOL, csrf_token=g.csrf_token,
+                           market_socket_url=market_socket_url)
+
+
+@app.route("/terminal")
+@app.route("/app")
+def terminal() -> str:
+    market_socket_url = os.getenv("MARKET_WS_URL", "")
+    if not market_socket_url and not (os.getenv("RENDER") or os.getenv("VERCEL")) and os.getenv("APCA_API_KEY_ID") and os.getenv("APCA_API_SECRET_KEY"):
+        market_socket_url = "ws://localhost:8765"
     return render_template("index.html", default_symbol=DEFAULT_SYMBOL, csrf_token=g.csrf_token,
                            market_socket_url=market_socket_url)
 

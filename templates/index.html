@@ -57,12 +57,6 @@
         </div>
     </div>
 
-    <!-- Floating / Header Portfolio launcher -->
-    <button id="portfolioLauncher" class="portfolio-launcher" type="button" aria-label="Open portfolio drawer">
-        <span class="launcher-icon">💼</span>
-        <span class="launcher-text">Portfolio</span>
-    </button>
-
     <!-- Slide-over Portfolio Drawer -->
     <aside id="portfolioDrawer" class="portfolio-drawer" tabindex="-1">
         <div class="portfolio-drawer-inner glass-panel">
@@ -114,7 +108,7 @@
     <div class="app-shell">
         <!-- 1. Top Executive Navigation Bar -->
         <header class="topbar glass-panel">
-            <div class="brand-cluster">
+            <a href="/" class="brand-cluster" title="AlphaScope Home">
                 <div class="brand-logo">
                     <span class="logo-glyph">α</span>
                 </div>
@@ -125,7 +119,7 @@
                     </div>
                     <span class="brand-subtitle">Multi-Asset Market Intelligence</span>
                 </div>
-            </div>
+            </a>
 
             <!-- Global Market Switcher Tabs -->
             <nav class="market-tabs header-market-tabs" aria-label="Markets">
@@ -155,15 +149,15 @@
             </form>
 
             <div class="topbar-actions">
-                <button id="openMarketModal" class="action-btn-outline" type="button" aria-label="Open Market Workspace" onclick="document.getElementById('marketOverlay').classList.remove('hidden')">
-                    <span class="tab-dot" style="background: var(--accent);"></span>Markets ▾
-                </button>
-                <button id="topbarPortfolioBtn" class="action-btn-outline" type="button" aria-label="Open Portfolio Drawer" onclick="document.getElementById('portfolioLauncher').click()">
+                <a href="/" class="action-btn-outline" title="Return to Home">
+                    <span>←</span> Home
+                </a>
+                <button id="portfolioLauncher" class="action-btn-outline" type="button" aria-label="Open Portfolio Drawer">
                     <span>💼</span> Portfolio
                 </button>
                 <div class="live-status pill-status">
                     <span id="streamIndicator" class="live-dot" data-state="unknown" role="img" aria-label="Market stream status unknown" title="Market stream status unknown"></span>
-                    <span id="statusMessage" class="status-text" aria-live="polite">Live Feed Ready</span>
+                    <span id="statusMessage" class="status-text" aria-live="polite">Live Feed</span>
                 </div>
                 <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
                     <span class="theme-icon">◐</span>
@@ -225,22 +219,6 @@
                                     <strong id="riskLevel" class="risk-value">--</strong>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Quick Tickers Instant Switcher -->
-                    <div class="quick-tickers-bar">
-                        <span class="quick-tickers-label">QUICK SWITCH:</span>
-                        <div class="quick-tickers-pills">
-                            <button type="button" class="quick-ticker-pill active" data-market="us" data-symbol="AAPL">AAPL</button>
-                            <button type="button" class="quick-ticker-pill" data-market="us" data-symbol="NVDA">NVDA</button>
-                            <button type="button" class="quick-ticker-pill" data-market="us" data-symbol="MSFT">MSFT</button>
-                            <button type="button" class="quick-ticker-pill" data-market="crypto" data-symbol="BTC-USD">BTC</button>
-                            <button type="button" class="quick-ticker-pill" data-market="crypto" data-symbol="ETH-USD">ETH</button>
-                            <button type="button" class="quick-ticker-pill" data-market="crypto" data-symbol="SOL-USD">SOL</button>
-                            <button type="button" class="quick-ticker-pill" data-market="india" data-symbol="TCS.NS">TCS</button>
-                            <button type="button" class="quick-ticker-pill" data-market="india" data-symbol="RELIANCE.NS">RELIANCE</button>
-                            <button type="button" class="quick-ticker-pill" data-market="forex" data-symbol="USDINR=X">USD/INR</button>
                         </div>
                     </div>
 

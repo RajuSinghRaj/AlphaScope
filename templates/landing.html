@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaScope · See Markets Differently · Multi-Asset Market Intelligence</title>
+    <meta name="description" content="Real-time insights, macro context, and smarter decisions. AlphaScope brings global markets, economic data, and portfolio analytics into a single powerful terminal.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/landing.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script>
+        window.APP_CONFIG = {
+            marketSocketUrl: "{{ market_socket_url }}"
+        };
+    </script>
+</head>
+<body class="landing-body">
+    <!-- Live Animated Video-like Background (Earth Horizon, Orbital Data Streams, Cosmic Stars) -->
+    <div class="cosmos-bg-container">
+        <img class="earth-horizon-image" src="{{ url_for('static', filename='img/earth_orbit_bg.jpg') }}" alt="Planet Earth from Space" />
+        <canvas id="liveCosmosCanvas" class="live-cosmos-canvas"></canvas>
+        <div class="space-vignette"></div>
+        <div class="ambient-glow cyan-glow"></div>
+        <div class="ambient-glow purple-glow"></div>
+    </div>
+
+    <!-- Main Landing Wrapper -->
+    <div class="landing-shell">
+        <!-- 1. Top Navigation Bar -->
+        <header class="landing-nav glass-nav">
+            <a href="/" class="nav-brand">
+                <div class="brand-glyph-wrap">
+                    <svg class="brand-glyph" width="22" height="22" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#cyanGrad)" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round"/>
+                        <path d="M2 17L12 22L22 17" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M2 12L12 17L22 12" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        <defs>
+                            <linearGradient id="cyanGrad" x1="2" y1="2" x2="22" y2="12" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#38bdf8" stop-opacity="0.8"/>
+                                <stop offset="1" stop-color="#818cf8" stop-opacity="0.8"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <span class="brand-text">AlphaScope</span>
+            </a>
+
+            <nav class="nav-links" aria-label="Main Navigation">
+                <a href="/" class="nav-item active">Home</a>
+                <a href="/terminal" class="nav-item">Markets</a>
+                <a href="/terminal" class="nav-item">Portfolio</a>
+                <a href="/terminal" class="nav-item">Insights</a>
+                <a href="/terminal" class="nav-item">News</a>
+                <a href="/terminal" class="nav-item">Macro</a>
+                <a href="#features" class="nav-item">About</a>
+            </nav>
+
+            <div class="nav-right-cluster">
+                <form class="nav-search-form" action="/terminal" method="GET">
+                    <svg class="nav-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" name="symbol" class="nav-search-input" placeholder="Search assets, news, data..." autocomplete="off">
+                </form>
+
+                <a href="/terminal" class="btn-launch-terminal">
+                    <span>Launch Terminal</span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline>
+                    </svg>
+                </a>
+            </div>
+        </header>
+
+        <!-- 2. Hero Stage & Live 3D Perspective Visual Area -->
+        <main class="hero-stage">
+            <div class="hero-content-split">
+                
+                <!-- Left Hero Copy -->
+                <div class="hero-left-col">
+                    <div class="eyebrow-pill">
+                        <span class="eyebrow-spark">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+                            </svg>
+                        </span>
+                        <span>MULTI-ASSET MARKET INTELLIGENCE</span>
+                    </div>
+
+                    <h1 class="hero-headline">
+                        See Markets<br>
+                        Differently with<br>
+                        <span class="gradient-title-text">AlphaScope</span>
+                    </h1>
+
+                    <p class="hero-description">
+                        Real-time insights. Macro context. Smarter decisions. <strong class="text-white">AlphaScope</strong> brings global markets, economic data, and portfolio analytics into a single powerful terminal.
+                    </p>
+
+                    <div class="hero-cta-group">
+                        <a href="/terminal" class="btn-primary-hero">
+                            <span>Get Started</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline>
+                            </svg>
+                        </a>
+                        <a href="/terminal" class="btn-glass-hero">
+                            <span>Explore Markets</span>
+                        </a>
+                    </div>
+
+                    <div class="hero-features-list">
+                        <div class="hero-feature-item">
+                            <div class="feature-icon-badge cyan-badge">🌐</div>
+                            <div class="feature-text-wrap">
+                                <strong>Global Markets</strong>
+                                <span>Stocks · Crypto · Forex · Commodities · Bonds</span>
+                            </div>
+                        </div>
+                        <div class="hero-feature-item">
+                            <div class="feature-icon-badge emerald-badge">📊</div>
+                            <div class="feature-text-wrap">
+                                <strong>Macro Insights</strong>
+                                <span>FRED Data · Economic Indicators · Central Banks</span>
+                            </div>
+                        </div>
+                        <div class="hero-feature-item">
+                            <div class="feature-icon-badge purple-badge">🟣</div>
+                            <div class="feature-text-wrap">
+                                <strong>Portfolio Analytics</strong>
+                                <span>Track · Analyze · Optimize</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Center 3D Floating Perspective Glass Terminal Mockup -->
+                <div class="hero-terminal-stage" id="terminalStage">
+                    <a href="/terminal" class="terminal-mockup-card glass-hud-panel" title="Click to open interactive terminal">
+                        <!-- Terminal Mockup Window Header -->
+                        <div class="mockup-window-header">
+                            <div class="mockup-brand">
+                                <span class="mockup-logo-glyph">α</span>
+                                <span class="mockup-title">AlphaScope</span>
+                            </div>
+                            <div class="mockup-nav-tabs">
+                                <span class="mock-tab active">Markets</span>
+                                <span class="mock-tab">Portfolio</span>
+                                <span class="mock-tab">Insights</span>
+                                <span class="mock-tab">News</span>
+                                <span class="mock-tab">Macro</span>
+                            </div>
+                            <div class="mockup-search-chip">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                <span>Search assets...</span>
+                            </div>
+                            <div class="mockup-user-avatar">R</div>
+                        </div>
+
+                        <!-- Terminal Screen Content Grid -->
+                        <div class="mockup-screen-grid">
+                            <!-- Left: Live Bitcoin Active Chart Station -->
+                            <div class="mockup-chart-side">
+                                <div class="mockup-asset-row">
+                                    <div class="mockup-asset-tag">
+                                        <div class="crypto-icon-btc">₿</div>
+                                        <div>
+                                            <div class="mockup-asset-sym">BTC-USD</div>
+                                            <div class="mockup-asset-sub">Bitcoin</div>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-price-block">
+                                        <div class="mockup-price-num">$67,432.18</div>
+                                        <div class="mockup-price-change profit">+$1,248.32 (+1.89%)</div>
+                                    </div>
+                                </div>
+
+                                <div class="mockup-timeframe-row">
+                                    <span class="mock-tf active">1D</span>
+                                    <span class="mock-tf">1W</span>
+                                    <span class="mock-tf">1M</span>
+                                    <span class="mock-tf">3M</span>
+                                    <span class="mock-tf">1Y</span>
+                                    <span class="mock-tf">ALL</span>
+                                </div>
+
+                                <!-- Animated Live Interactive Candlestick / Area Chart -->
+                                <div class="mockup-canvas-wrapper">
+                                    <canvas id="mockupLiveChart"></canvas>
+                                </div>
+
+                                <div class="mockup-timeline-labels">
+                                    <span>06:00</span>
+                                    <span>12:00</span>
+                                    <span>18:00</span>
+                                    <span>00:00</span>
+                                    <span>06:00</span>
+                                </div>
+                            </div>
+
+                            <!-- Right: Live Watchlist Column -->
+                            <div class="mockup-watchlist-side">
+                                <div class="mockup-wl-header">
+                                    <span>Watchlist</span>
+                                    <span class="mockup-wl-plus">+</span>
+                                </div>
+                                <div class="mockup-wl-list">
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">🍎</span> AAPL</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">189.34</span>
+                                            <span class="wl-move profit">+1.23%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">🪟</span> MSFT</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">425.21</span>
+                                            <span class="wl-move profit">+0.87%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">🔍</span> GOOGL</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">172.56</span>
+                                            <span class="wl-move profit">+1.45%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item active">
+                                        <div class="wl-inst"><span class="wl-ico">₿</span> BTC</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">67,432.18</span>
+                                            <span class="wl-move profit">+1.89%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">🔷</span> ETH</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">2,648.90</span>
+                                            <span class="wl-move profit">+2.34%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">☀️</span> SOL</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">154.32</span>
+                                            <span class="wl-move profit">+3.12%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mockup-wl-item">
+                                        <div class="wl-inst"><span class="wl-ico">💧</span> SUI</div>
+                                        <div class="wl-vals">
+                                            <span class="wl-price">2.18</span>
+                                            <span class="wl-move profit">+2.67%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Hover Prompt Hint -->
+                        <div class="mockup-click-overlay">
+                            <span class="click-hint-pill">Launch Interactive Pro Terminal &rarr;</span>
+                        </div>
+                    </a>
+                </div>
+
+                <!-- Right Side Floating HUD Cards -->
+                <div class="hero-right-hud">
+                    <!-- 1. Macro Snapshot Card -->
+                    <a href="/terminal" class="hud-card glass-hud-panel" title="View Macro Indicators">
+                        <div class="hud-card-header">
+                            <span class="hud-card-title">Macro Snapshot</span>
+                            <span class="hud-arrow">&rarr;</span>
+                        </div>
+                        <div class="macro-hud-rows">
+                            <div class="macro-hud-item">
+                                <span class="macro-label">CPI (YoY)</span>
+                                <span class="macro-val">3.2%</span>
+                                <svg class="sparkline green" width="46" height="18" viewBox="0 0 50 20">
+                                    <polyline points="0,15 12,12 25,14 38,7 50,4" fill="none" stroke="#34d399" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div class="macro-hud-item">
+                                <span class="macro-label">Fed Funds Rate</span>
+                                <span class="macro-val">5.33%</span>
+                                <svg class="sparkline red" width="46" height="18" viewBox="0 0 50 20">
+                                    <polyline points="0,5 12,8 25,6 38,13 50,16" fill="none" stroke="#fb7185" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div class="macro-hud-item">
+                                <span class="macro-label">Unemployment</span>
+                                <span class="macro-val">4.1%</span>
+                                <svg class="sparkline green" width="46" height="18" viewBox="0 0 50 20">
+                                    <polyline points="0,16 12,14 25,9 38,11 50,6" fill="none" stroke="#34d399" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div class="macro-hud-item">
+                                <span class="macro-label">GDP (QoQ)</span>
+                                <span class="macro-val">2.8%</span>
+                                <svg class="sparkline green" width="46" height="18" viewBox="0 0 50 20">
+                                    <polyline points="0,14 12,11 25,13 38,8 50,5" fill="none" stroke="#34d399" stroke-width="2"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </a>
+
+                    <!-- 2. Latest News Wire Card -->
+                    <a href="/terminal" class="hud-card glass-hud-panel" title="View Latest Financial Wire">
+                        <div class="hud-card-header">
+                            <span class="hud-card-title">Latest News</span>
+                            <span class="hud-view-all">View all &rarr;</span>
+                        </div>
+                        <div class="news-hud-list">
+                            <div class="news-hud-entry">
+                                <img src="{{ url_for('static', filename='img/news_fed.jpg') }}" alt="Federal Reserve" class="news-thumb">
+                                <div class="news-entry-info">
+                                    <p class="news-entry-headline">Fed signals cautious stance on rate cuts</p>
+                                    <span class="news-entry-meta">2h ago · Reuters</span>
+                                </div>
+                            </div>
+                            <div class="news-hud-entry">
+                                <img src="{{ url_for('static', filename='img/news_tech.jpg') }}" alt="Tech rally" class="news-thumb">
+                                <div class="news-entry-info">
+                                    <p class="news-entry-headline">Tech stocks rally as earnings beat expectations</p>
+                                    <span class="news-entry-meta">4h ago · Bloomberg</span>
+                                </div>
+                            </div>
+                            <div class="news-hud-entry">
+                                <img src="{{ url_for('static', filename='img/news_btc.jpg') }}" alt="Bitcoin rally" class="news-thumb">
+                                <div class="news-entry-info">
+                                    <p class="news-entry-headline">Bitcoin holds above $67K amid ETF inflows</p>
+                                    <span class="news-entry-meta">6h ago · CNBC</span>
+                                </div>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+
+            </div>
+
+            <!-- Floating Global Market Badges Over Earth Horizon -->
+            <div class="orbital-market-pins">
+                <a href="/terminal" class="market-pin-badge pin-sp500" title="S&P 500">
+                    <span class="pin-beacon"></span>
+                    <span class="pin-title">S&amp;P 500</span>
+                    <strong class="pin-val profit">+0.84%</strong>
+                </a>
+                <a href="/terminal" class="market-pin-badge pin-nasdaq" title="NASDAQ">
+                    <span class="pin-beacon"></span>
+                    <span class="pin-title">NASDAQ</span>
+                    <strong class="pin-val profit">+1.23%</strong>
+                </a>
+                <a href="/terminal" class="market-pin-badge pin-gold" title="GOLD">
+                    <span class="pin-beacon"></span>
+                    <span class="pin-title">GOLD</span>
+                    <strong class="pin-val profit">+0.56%</strong>
+                </a>
+                <a href="/terminal" class="market-pin-badge pin-eurusd" title="EUR/USD">
+                    <span class="pin-beacon"></span>
+                    <span class="pin-title">EUR/USD</span>
+                    <strong class="pin-val loss">-0.21%</strong>
+                </a>
+                <a href="/terminal" class="market-pin-badge pin-btc" title="Bitcoin">
+                    <span class="pin-beacon"></span>
+                    <span class="pin-title">BTC</span>
+                    <strong class="pin-val profit">+1.89%</strong>
+                </a>
+            </div>
+
+            <!-- 3. Bottom 4 Feature Value Pillars -->
+            <section id="features" class="bottom-features-grid">
+                <a href="/terminal" class="feature-card glass-hud-panel">
+                    <div class="feature-card-top">
+                        <div class="feature-card-icon purple-bg">⚡</div>
+                        <span class="feature-card-arrow">&rarr;</span>
+                    </div>
+                    <h3 class="feature-card-title">Real-Time Market Data</h3>
+                    <p class="feature-card-copy">Track global markets with live prices, candlestick charts, and instant volume snapshots.</p>
+                </a>
+
+                <a href="/terminal" class="feature-card glass-hud-panel">
+                    <div class="feature-card-top">
+                        <div class="feature-card-icon blue-bg">📊</div>
+                        <span class="feature-card-arrow">&rarr;</span>
+                    </div>
+                    <h3 class="feature-card-title">Economic Indicators</h3>
+                    <p class="feature-card-copy">Stay informed with key macro data from Federal Reserve FRED observations and economic reports.</p>
+                </a>
+
+                <a href="/terminal" class="feature-card glass-hud-panel">
+                    <div class="feature-card-top">
+                        <div class="feature-card-icon cyan-bg">💼</div>
+                        <span class="feature-card-arrow">&rarr;</span>
+                    </div>
+                    <h3 class="feature-card-title">Portfolio Management</h3>
+                    <p class="feature-card-copy">Monitor your holdings, mark-to-market valuations, and sandbox execution performance seamlessly.</p>
+                </a>
+
+                <a href="/terminal" class="feature-card glass-hud-panel">
+                    <div class="feature-card-top">
+                        <div class="feature-card-icon indigo-bg">💡</div>
+                        <span class="feature-card-arrow">&rarr;</span>
+                    </div>
+                    <h3 class="feature-card-title">Market Intelligence</h3>
+                    <p class="feature-card-copy">Get reasoned insights from algorithmic move calculations, trend status, and real-time news.</p>
+                </a>
+            </section>
+        </main>
+    </div>
+
+    <!-- Live Cosmos Animation & Chart Script -->
+    <script src="{{ url_for('static', filename='js/landing.js') }}"></script>
+</body>
+</html>
