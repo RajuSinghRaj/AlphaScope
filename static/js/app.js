@@ -109,6 +109,7 @@ const elements = {
     watchlistSymbol: document.getElementById("watchlistSymbol"),
     watchlistMarket: document.getElementById("watchlistMarket"),
     watchlistRows: document.getElementById("watchlistRows"),
+    watchlistMessage: document.getElementById("watchlistMessage"),
     orderForm: document.getElementById("orderForm"),
     orderSymbol: document.getElementById("orderSymbol"),
     orderMarket: document.getElementById("orderMarket"),
@@ -609,7 +610,7 @@ async function loadPortfolio() {
 async function loadWatchlist() {
     try {
         const response = await fetch("/api/watchlist");
-        if (response.status === 401) { window.location.assign("/login"); return; }
+        if (response.status === 401) { return; }
         const result = await response.json();
         if (!result.success) throw new Error(result.message || "Watchlist unavailable");
         if (!result.data.length) {
@@ -617,18 +618,34 @@ async function loadWatchlist() {
             return;
         }
         const table = document.createElement("table");
-        table.innerHTML = "<thead><tr><th>Instrument</th><th>Price</th><th>Move</th><th>Status / source</th><th></th></tr></thead>";
+        table.innerHTML = "<thead><tr><th>Instrument</th><th>Price</th><th>Move</th><th></th></tr></thead>";
         const body = document.createElement("tbody");
         result.data.forEach((item) => {
             const row = document.createElement("tr");
-            const values = [item.symbol + " | " + item.market, item.price == null ? "--" : formatPrice(item.price, item.currency, item.market),
-                item.change_percent == null ? "--" : (item.change == null ? "" : formatPrice(item.change, item.currency, item.market) + " | ") + formatPercent(item.change_percent),
-                item.data_status + " | " + item.freshness + " | " + item.source + (item.event_timestamp ? " | " + new Date(item.event_timestamp).toLocaleString() : "")];
-            values.forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.appendChild(cell); });
+            row.style.cursor = "pointer";
+            row.title = "Click to analyze " + item.symbol;
+            const cellInst = document.createElement("td");
+            cellInst.innerHTML = `<strong>${escapeHtml(item.symbol)}</strong> <small style="display:inline;color:var(--muted)">(${escapeHtml(item.market)})</small>`;
+            cellInst.addEventListener("click", async () => {
+                setMarketContext(String(item.market).toLowerCase(), item.symbol);
+                await loadAsset();
+            });
+            row.appendChild(cellInst);
+            const cellPrice = document.createElement("td");
+            cellPrice.textContent = item.price == null ? "--" : formatPrice(item.price, item.currency, item.market);
+            row.appendChild(cellPrice);
+            const cellMove = document.createElement("td");
+            cellMove.textContent = item.change_percent == null ? "--" : formatPercent(item.change_percent);
+            cellMove.className = toneClass(item.change_percent);
+            row.appendChild(cellMove);
             const actionCell = document.createElement("td");
             const remove = document.createElement("button");
-            remove.type = "button"; remove.className = "market-tab"; remove.textContent = "Remove";
-            remove.addEventListener("click", async () => await removeWatchlistItem(item.symbol));
+            remove.type = "button"; remove.className = "action-btn-outline btn-sm"; remove.textContent = "✕";
+            remove.title = "Remove from watchlist";
+            remove.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                await removeWatchlistItem(item.symbol);
+            });
             actionCell.appendChild(remove); row.appendChild(actionCell); body.appendChild(row);
         });
         table.appendChild(body);
@@ -639,12 +656,31 @@ async function loadWatchlist() {
 }
 
 async function addWatchlistItem(symbol, market) {
-    const response = await fetch("/api/watchlist", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({ symbol, market }) });
-    const result = await response.json();
-    elements.statusMessage.textContent = result.message || "Watchlist request completed.";
-    if (result.success) await loadWatchlist();
-    return result;
+    if (!symbol) return;
+    if (elements.watchlistMessage) {
+        elements.watchlistMessage.textContent = "Adding to watchlist...";
+        elements.watchlistMessage.className = "muted-line";
+    }
+    try {
+        const response = await fetch("/api/watchlist", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+            body: JSON.stringify({ symbol, market }) });
+        const result = await response.json();
+        elements.statusMessage.textContent = result.message || "Watchlist request completed.";
+        if (elements.watchlistMessage) {
+            elements.watchlistMessage.textContent = result.message || (result.success ? "Added to watchlist." : "Could not add symbol.");
+            elements.watchlistMessage.className = result.success ? "profit" : "loss";
+        }
+        if (result.success) {
+            if (elements.watchlistSymbol) elements.watchlistSymbol.value = "";
+            await loadWatchlist();
+        }
+        return result;
+    } catch (err) {
+        if (elements.watchlistMessage) {
+            elements.watchlistMessage.textContent = "Failed to add symbol.";
+            elements.watchlistMessage.className = "loss";
+        }
+    }
 }
 
 async function removeWatchlistItem(symbol) {

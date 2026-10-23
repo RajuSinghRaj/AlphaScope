@@ -1285,12 +1285,22 @@ def add_watchlist_item() -> Any:
     if not csrf_is_valid():
         return jsonify({"success": False, "message": "Invalid request token."}), 400
     payload = request.get_json(silent=True) or {}
+    symbol = str(payload.get("symbol", "")).strip()
+    if not symbol:
+        return jsonify({"success": False, "message": "Please enter an asset symbol."}), 400
+    inferred = infer_market_for_symbol(symbol)
+    req_market = str(payload.get("market", "")).strip().lower()
+    market = req_market or inferred or "us"
     try:
-        asset = validated_trade_asset(payload.get("symbol"), payload.get("market"))
-    except ValueError as error:
-        return jsonify({"success": False, "message": str(error)}), 400
-    except Exception:
-        return jsonify({"success": False, "message": "Symbol could not be verified by the available market-data source."}), 422
+        asset = validated_trade_asset(symbol, market)
+    except Exception as error:
+        if inferred and inferred != market:
+            try:
+                asset = validated_trade_asset(symbol, inferred)
+            except Exception:
+                return jsonify({"success": False, "message": str(error)}), 400
+        else:
+            return jsonify({"success": False, "message": str(error)}), 400
     with get_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         watchlist_id = default_watchlist(connection, g.account_id)
