@@ -2,6 +2,8 @@ services:
   - type: web
     name: alphascope
     env: python
+    runtime: python311
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /health

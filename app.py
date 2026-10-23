@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
+import math
+import re
+import secrets
 import sqlite3
+import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 import time
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, g, jsonify, redirect, render_template, request
+from database.foundation import backend as database_backend, connect as database_connect, migrate as migrate_foundation
+from werkzeug.security import check_password_hash, generate_password_hash
+from market_intelligence import analyze_move, fetch_fred_series, fetch_news_items
+from rate_limit import ProcessRateLimiter
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_DIR = BASE_DIR / "database"
-DB_PATH = Path("/tmp/db.sqlite3") if os.getenv("VERCEL") else DB_DIR / "db.sqlite3"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_SYMBOL = "AAPL"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -94,9 +104,35 @@ POSITIVE_WORDS = {"surge", "gain", "up", "beats", "growth", "rally", "strong", "
 NEGATIVE_WORDS = {"fall", "down", "miss", "drop", "weak", "risk", "cut", "loss", "negative"}
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "1" if (os.getenv("RENDER") or os.getenv("VERCEL")) else "0") == "1"
+app.config["SESSION_COOKIE_DOMAIN"] = os.getenv("SESSION_COOKIE_DOMAIN") or None
+AUTH_SESSION_SECONDS = 7 * 24 * 60 * 60
+AUTH_COOKIE = "alphascope_sid"
 ASSET_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
 OVERVIEW_CACHE: tuple[float, dict[str, list[dict[str, Any]]]] | None = None
 NEWS_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+MAX_ASSET_CACHE_ENTRIES = 512
+
+
+def _bounded_positive_setting(name: str, default: int, maximum: int) -> int:
+    try:
+        return min(max(1, int(os.getenv(name, str(default)))), maximum)
+    except (TypeError, ValueError):
+        return default
+
+
+PUBLIC_RATE_WINDOW_SECONDS = _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_WINDOW_SECONDS", 60, 3600)
+PUBLIC_RATE_LIMITS = {
+    "get_stock_data": _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_MARKET_DATA", 60, 10000),
+    "get_market_overview": _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_MARKET_OVERVIEW", 12, 10000),
+    "news_feed": _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_NEWS", 20, 10000),
+    "macro_dashboard": _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_MACRO", 12, 10000),
+    "move_analysis": _bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_MOVE_ANALYSIS", 20, 10000),
+}
+PUBLIC_RATE_LIMITER = ProcessRateLimiter(
+    max_keys=_bounded_positive_setting("ALPHASCOPE_RATE_LIMIT_MAX_KEYS", 4096, 65536)
+)
 
 
 def disable_invalid_proxy_env() -> None:
@@ -116,15 +152,44 @@ def create_http_session() -> requests.Session:
     return session
 
 
+@app.before_request
+def limit_public_provider_routes():
+    """Limit provider-backed public routes using only the direct WSGI peer address."""
+    endpoint = request.endpoint
+    limit = PUBLIC_RATE_LIMITS.get(endpoint)
+    if limit is None:
+        return None
+    allowed, retry_after = PUBLIC_RATE_LIMITER.check(
+        endpoint, request.remote_addr, limit, PUBLIC_RATE_WINDOW_SECONDS
+    )
+    if allowed:
+        return None
+    response = jsonify({"success": False, "message": "Too many requests. Please retry shortly."})
+    response.status_code = 429
+    response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
 def get_connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return database_connect()
 
 
 def init_db() -> None:
     DB_DIR.mkdir(parents=True, exist_ok=True)
+    if database_backend() == "postgresql":
+        # Remote schema changes are an explicit operator action, never an app-start side effect.
+        with get_connection() as connection:
+            try:
+                from database.postgres_migrations import MIGRATIONS, migration_state
+                version = migration_state(connection)
+            except Exception:
+                connection.rollback()
+                version = 0
+        if version != len(MIGRATIONS):
+            raise RuntimeError("PostgreSQL schema is not ready. Review target and backup, then use the guarded database migration command.")
+        return
     with get_connection() as connection:
+        migrate_foundation(connection)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS portfolio (
@@ -139,14 +204,134 @@ def init_db() -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(portfolio)").fetchall()}
         if "purchase_price" not in columns:
             connection.execute("ALTER TABLE portfolio ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0")
+        connection.execute("""CREATE TABLE IF NOT EXISTS portfolio_idempotency (
+            idempotency_key TEXT PRIMARY KEY,
+            portfolio_id INTEGER NOT NULL REFERENCES portfolio(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL
+        )""")
+        connection.executescript((DB_DIR / "migrations" / "002_auth_sessions.sql").read_text(encoding="utf-8"))
+        holding_columns = {row["name"] for row in connection.execute("PRAGMA table_info(account_holdings)")}
+        if "currency" not in holding_columns:
+            connection.execute("ALTER TABLE account_holdings ADD COLUMN currency TEXT")
+        if "asset_class" not in holding_columns:
+            connection.execute("ALTER TABLE account_holdings ADD COLUMN asset_class TEXT")
+        user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "email" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        if "password_hash" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+        connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL")
+        portfolio_columns = {row["name"] for row in connection.execute("PRAGMA table_info(portfolio)")}
+        if "owner_account_id" not in portfolio_columns:
+            connection.execute("ALTER TABLE portfolio ADD COLUMN owner_account_id TEXT REFERENCES accounts(id)")
+        idem_columns = {row["name"] for row in connection.execute("PRAGMA table_info(portfolio_idempotency)")}
+        if "owner_account_id" not in idem_columns:
+            connection.execute("ALTER TABLE portfolio_idempotency ADD COLUMN owner_account_id TEXT REFERENCES accounts(id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_owner ON portfolio(owner_account_id)")
+        order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(orders)")}
+        for column, declaration in {
+            "provider": "TEXT NOT NULL DEFAULT 'local_simulator'",
+            "provider_order_id": "TEXT",
+            "updated_at": "TEXT",
+            "submitted_at": "TEXT",
+            "cancelled_at": "TEXT",
+            "rejection_reason": "TEXT",
+            "preview_json": "TEXT",
+        }.items():
+            if column not in order_columns:
+                connection.execute(f"ALTER TABLE orders ADD COLUMN {column} {declaration}")
+        connection.executescript((DB_DIR / "migrations" / "003_batch3_order_events.sql").read_text(encoding="utf-8"))
         connection.commit()
+
+
+def session_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+
+@app.before_request
+def load_auth_session() -> None:
+    token = request.cookies.get(AUTH_COOKIE, "")
+    digest = session_digest(token) if re.fullmatch(r"[0-9a-f]{64}", token) else ""
+    now = datetime.now(timezone.utc)
+    with get_connection() as connection:
+        connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now.isoformat(),))
+        session_row = connection.execute(
+            "SELECT session_hash, user_id, csrf_token FROM auth_sessions WHERE session_hash = ? AND expires_at > ?",
+            (digest, now.isoformat()),
+        ).fetchone() if digest else None
+        if session_row is None:
+            token = secrets.token_hex(32)
+            digest = session_digest(token)
+            csrf = secrets.token_urlsafe(32)
+            connection.execute("INSERT INTO auth_sessions VALUES (?, NULL, ?, ?, ?)",
+                               (digest, csrf, now.isoformat(), (now + timedelta(seconds=AUTH_SESSION_SECONDS)).isoformat()))
+            g.new_session_cookie = token
+            g.csrf_token = csrf
+            g.session_hash = digest
+            g.user_id = None
+        else:
+            g.session_hash = session_row["session_hash"]
+            g.user_id = session_row["user_id"]
+            g.csrf_token = session_row["csrf_token"]
+        g.account_id = None
+        if g.user_id:
+            row = connection.execute("SELECT id FROM accounts WHERE user_id = ? ORDER BY created_at LIMIT 1", (g.user_id,)).fetchone()
+            g.account_id = row["id"] if row else None
+
+
+@app.after_request
+def set_auth_cookie(response):
+    token = getattr(g, "new_session_cookie", None)
+    if token:
+        response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_SESSION_SECONDS, httponly=True,
+                            secure=app.config["SESSION_COOKIE_SECURE"], samesite="Lax", path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
+    if request.path.startswith(("/login", "/register", "/logout", "/auth", "/get_portfolio", "/add_stock", "/delete_stock", "/portfolio_predict", "/api/watchlist", "/api/orders")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def csrf_is_valid() -> bool:
+    body = request.get_json(silent=True) or {}
+    candidate = request.headers.get("X-CSRF-Token") or body.get("csrf_token") or request.form.get("csrf_token", "")
+    return bool(candidate and secrets.compare_digest(str(candidate), g.csrf_token))
+
+
+def auth_error(message: str, status: int):
+    if request.is_json:
+        return jsonify({"success": False, "message": message}), status
+    return render_template("auth.html", mode=request.path.strip("/"), error=message, csrf_token=g.csrf_token), status
+
+
+def rate_limited(connection: sqlite3.Connection) -> bool:
+    ip = ProcessRateLimiter.client_key(request.remote_addr)
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    connection.execute("DELETE FROM auth_attempts WHERE attempted_at < ?", (cutoff,))
+    attempts = connection.execute("SELECT COUNT(*) FROM auth_attempts WHERE ip_address = ? AND attempted_at >= ?", (ip, cutoff)).fetchone()[0]
+    return attempts >= 30
+
+
+def record_auth_failure(connection: sqlite3.Connection) -> None:
+    ip = ProcessRateLimiter.client_key(request.remote_addr)
+    connection.execute("INSERT INTO auth_attempts(ip_address, attempted_at) VALUES (?, ?)",
+                       (ip, datetime.now(timezone.utc).isoformat()))
+
+
+def rotate_session(connection: sqlite3.Connection, user_id: str) -> str:
+    token = secrets.token_hex(32)
+    now = datetime.now(timezone.utc)
+    connection.execute("DELETE FROM auth_sessions WHERE session_hash = ?", (g.session_hash,))
+    connection.execute("INSERT INTO auth_sessions(session_hash, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                       (session_digest(token), user_id, secrets.token_urlsafe(32), now.isoformat(),
+                        (now + timedelta(seconds=AUTH_SESSION_SECONDS)).isoformat()))
+    return token
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
             return default
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else default
     except (TypeError, ValueError):
         return default
 
@@ -325,49 +510,10 @@ def derive_sentiment(text: str) -> str:
 
 
 def fetch_news(query: str, market: str) -> list[dict[str, str]]:
-    cache_key = f"{market}:{query}".lower()
-    now = time.time()
-    cached = NEWS_CACHE.get(cache_key)
-    if cached and now - cached[0] < 900:
-        return cached[1]
-
     try:
-        session = create_http_session()
-        response = session.get(
-            GOOGLE_NEWS_RSS.format(query=quote_plus(f"{query} {market} market")),
-            timeout=15,
-        )
-        response.raise_for_status()
-        root = ET.fromstring(response.text)
-        items = root.findall(".//item")[:4]
-        news_items: list[dict[str, str]] = []
-
-        for item in items:
-            title = (item.findtext("title") or "").strip()
-            description = (item.findtext("description") or "").strip()
-            if not title:
-                continue
-            sentiment = derive_sentiment(f"{title} {description}")
-            news_items.append(
-                {
-                    "headline": title,
-                    "sentiment": sentiment,
-                    "summary": description[:180] or f"{market} headlines are shaping the latest tone around this asset.",
-                }
-            )
-
-        NEWS_CACHE[cache_key] = (now, news_items)
-        return news_items
+        return fetch_news_items(query, market, session=create_http_session())
     except Exception:
-        fallback = [
-            {
-                "headline": f"{query} market coverage is limited right now.",
-                "sentiment": "Neutral",
-                "summary": f"Live headlines were unavailable, so AlphaScope is using price action and trend data for the current {market.lower()} insight.",
-            }
-        ]
-        NEWS_CACHE[cache_key] = (now, fallback)
-        return fallback
+        return []
 
 
 def generate_rule_based_insight(
@@ -378,7 +524,7 @@ def generate_rule_based_insight(
     news_context: list[dict[str, str]],
 ) -> dict[str, str]:
     risk_level = determine_risk(change, trend)
-    news_bias = news_context[0]["sentiment"] if news_context else "Neutral"
+    news_bias = "Unscored"
     spread = max(trend) - min(trend) if trend else 0
     baseline = max(abs(trend[-1]), 1) if trend else 1
     volatility_ratio = spread / baseline * 100
@@ -386,37 +532,22 @@ def generate_rule_based_insight(
     pattern = detect_market_pattern(trend, change)
 
     if pattern == "breakout":
-        summary = (
-            f"{market} price is pushing through a recent range near {price:.2f}, which suggests a possible breakout. "
-            f"Headline tone is {news_bias.lower()}, so confidence may be helping traders extend the move."
-        )
+        summary = f"{market} price is above the recent range near {price:.2f}. This price pattern does not establish its cause."
     elif pattern == "breakdown":
-        summary = (
-            f"{market} price is slipping below a recent range near {price:.2f}, which points to a possible breakdown. "
-            f"Headline tone is {news_bias.lower()}, so caution may still be weighing on sentiment."
-        )
+        summary = f"{market} price is below the recent range near {price:.2f}. This price pattern does not establish its cause."
     elif pattern == "consolidation":
-        summary = (
-            f"{market} price is moving in a relatively tight band near {price:.2f}, so the market looks to be consolidating. "
-            f"Headline tone is {news_bias.lower()}, and traders may be waiting for a clearer direction."
-        )
+        summary = f"{market} price has moved within a relatively tight band near {price:.2f}. No cause is inferred."
     elif change >= 0:
-        summary = (
-            f"{market} buyers are in control near {price:.2f}, and the latest move still has upward momentum. "
-            f"Headline tone is {news_bias.lower()}, which helps explain why confidence may be supporting price."
-        )
+        summary = f"{market} price is higher over the selected history and is near {price:.2f}. Price direction does not identify a cause."
     else:
-        summary = (
-            f"{market} sellers are controlling the move near {price:.2f}, so short-term momentum is weaker. "
-            f"Headline tone is {news_bias.lower()}, which may be reinforcing trader caution."
-        )
+        summary = f"{market} price is lower over the selected history and is near {price:.2f}. Price direction does not identify a cause."
     beginner_tip = build_beginner_tip(market, news_bias, risk_level, pattern, trend_up, volatility_ratio)
 
     return {
         "summary": summary,
         "risk_level": risk_level,
         "beginner_tip": beginner_tip,
-        "source": "fallback",
+        "source": "price_history_only",
     }
 
 
@@ -456,31 +587,9 @@ def generate_ai_insight(
     symbol: str,
     news_context: list[dict[str, str]],
 ) -> dict[str, str]:
-    fallback = generate_rule_based_insight(price, change, trend, market, news_context)
-    headlines = "; ".join(item["headline"] for item in news_context[:2]) or "No major headlines available."
-    prompt = (
-        "You explain financial movement to beginners in plain English.\n"
-        f"Asset: {symbol}\n"
-        f"Market: {market}\n"
-        f"Price: {price:.4f}\n"
-        f"Change: {change:+.2f}%\n"
-        f"Recent trend points: {', '.join(f'{point:.2f}' for point in trend[-8:])}\n"
-        f"Recent headlines: {headlines}\n"
-        "Explain what is happening and why in 2 short sentences.\n"
-        "Then provide risk level as Low, Medium, or High and one beginner tip.\n"
-        "Format:\nSummary: ...\nRisk: ...\nTip: ..."
-    )
-
-    try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={"model": "llama3", "prompt": prompt, "stream": False},
-            timeout=12,
-        )
-        response.raise_for_status()
-        return parse_ollama_response(response.json().get("response", ""), fallback)
-    except requests.RequestException:
-        return fallback
+    # Deterministic, price-only summary. Headlines remain separately linked and are
+    # never converted into causal claims by an ungrounded local model.
+    return generate_rule_based_insight(price, change, trend, market, news_context)
 
 
 def build_trend_status(change_percent: float, closes: list[float]) -> dict[str, str]:
@@ -542,19 +651,24 @@ def parse_chart_result(symbol: str, range_key: str, result: dict[str, Any]) -> d
         low_value = lows[idx] if idx < len(lows) else close_value
         if None in {open_value, high_value, low_value, close_value}:
             continue
+        open_number = safe_float(open_value, float("nan"))
+        high_number = safe_float(high_value, float("nan"))
+        low_number = safe_float(low_value, float("nan"))
+        close_number = safe_float(close_value, float("nan"))
+        if not all(math.isfinite(value) and value > 0 for value in (open_number, high_number, low_number, close_number)):
+            continue
         ts_ms = int(timestamp) * 1000
         if previous_ts_ms is not None and ts_ms - previous_ts_ms > gap_ms:
             # Break the line between separate trading sessions so the chart
             # does not draw a misleading diagonal across market-closed periods.
             points.append({"x": previous_ts_ms + 1, "y": None})
-        close_number = safe_float(close_value)
         points.append({"x": ts_ms, "y": round(close_number, 4)})
         candles.append(
             {
                 "x": ts_ms,
-                "o": round(safe_float(open_value), 4),
-                "h": round(safe_float(high_value), 4),
-                "l": round(safe_float(low_value), 4),
+                "o": round(open_number, 4),
+                "h": round(high_number, 4),
+                "l": round(low_number, 4),
                 "c": round(close_number, 4),
             }
         )
@@ -567,10 +681,16 @@ def parse_chart_result(symbol: str, range_key: str, result: dict[str, Any]) -> d
     market = classify_market(symbol)
     current_price = safe_float(meta.get("regularMarketPrice"), closes_clean[-1])
     previous_close = safe_float(meta.get("chartPreviousClose"), closes_clean[0])
+    if current_price <= 0:
+        current_price = closes_clean[-1]
+    if previous_close <= 0:
+        previous_close = closes_clean[0]
+    change_amount = current_price - previous_close if previous_close > 0 and current_price > 0 else None
     change_percent = ((current_price - previous_close) / previous_close) * 100 if previous_close else 0
     name = meta.get("shortName") or DISPLAY_NAMES.get(symbol.upper(), symbol.upper())
     currency = meta.get("currency") or ("INR" if market == "India" else "USD")
     exchange = meta.get("fullExchangeName") or meta.get("exchangeName") or market
+    source_timestamp = safe_float(meta.get("regularMarketTime"), timestamps[-1] if timestamps else 0)
     news = fetch_news(name, market)
     insight = generate_ai_insight(current_price, change_percent, closes_clean, market, symbol, news)
 
@@ -581,6 +701,7 @@ def parse_chart_result(symbol: str, range_key: str, result: dict[str, Any]) -> d
         "currency": currency,
         "exchange": exchange,
         "price": round(current_price, 4 if market == "Forex" else 2),
+        "change": round(change_amount, 4 if market == "Forex" else 2) if change_amount is not None else None,
         "change_percent": round(change_percent, 2),
         "range": range_key,
         "history": {
@@ -590,23 +711,47 @@ def parse_chart_result(symbol: str, range_key: str, result: dict[str, Any]) -> d
         "trend_status": build_trend_status(change_percent, closes_clean),
         "insight": insight,
         "news": news,
-        "mode": "live",
+        "move_analysis": analyze_move(
+            points,
+            "Yahoo Finance chart snapshot/history",
+            news,
+        ),
+        "mode": "snapshot",
+        "data_status": "snapshot",
+        "freshness": quote_freshness(datetime.fromtimestamp(source_timestamp, timezone.utc).isoformat().replace("+00:00", "Z") if source_timestamp > 0 else None),
+        "source": "Yahoo Finance chart endpoint (snapshot/history; not a live exchange feed)",
+        "event_timestamp": datetime.fromtimestamp(source_timestamp, timezone.utc).isoformat().replace("+00:00", "Z") if source_timestamp > 0 else None,
+        "last_received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "news_status": "available" if news else "unavailable",
     }
 
 
 def fetch_market_data(symbol: str, market: str | None = None, range_key: str = "day") -> dict[str, Any]:
-    cache_key = ((market or "").lower(), symbol.strip().upper(), range_key)
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z0-9.^=-]{1,20}", symbol.strip()):
+        raise ValueError("Enter a valid supported symbol.")
+    market_key = (market or "").strip().lower()
+    if market_key and market_key not in MARKET_PRESETS:
+        raise ValueError("Select a supported market.")
+    if range_key not in RANGE_CONFIG:
+        raise ValueError("Select a supported chart range.")
+    cache_key = (market_key, symbol.strip().upper(), range_key)
     now = time.time()
     cached = ASSET_CACHE.get(cache_key)
     if cached and now - cached[0] < 20:
         return cached[1]
+    for expired_key, (stamp, _) in list(ASSET_CACHE.items()):
+        if now - stamp >= 20:
+            ASSET_CACHE.pop(expired_key, None)
 
-    candidates = normalize_symbol(symbol, market)
+    candidates = normalize_symbol(symbol, market_key)
     final_error = None
     for candidate in candidates:
         try:
             result = fetch_yahoo_chart(candidate, range_key)
             parsed = parse_chart_result(candidate, range_key, result)
+            if cache_key not in ASSET_CACHE and len(ASSET_CACHE) >= MAX_ASSET_CACHE_ENTRIES:
+                oldest_key = min(ASSET_CACHE, key=lambda key: ASSET_CACHE[key][0])
+                ASSET_CACHE.pop(oldest_key, None)
             ASSET_CACHE[cache_key] = (now, parsed)
             return parsed
         except Exception as error:
@@ -632,8 +777,14 @@ def build_market_overview() -> dict[str, list[dict[str, Any]]]:
                         "name": data["name"],
                         "price": data["price"],
                         "currency": data["currency"],
+                        "change": data.get("change"),
                         "change_percent": data["change_percent"],
                         "market": data["market"],
+                        "data_status": data.get("data_status", "snapshot"),
+                        "freshness": data.get("freshness", "unknown"),
+                        "source": data.get("source"),
+                        "event_timestamp": data.get("event_timestamp"),
+                        "last_received_at": data.get("last_received_at"),
                     }
                 )
             except Exception:
@@ -643,46 +794,98 @@ def build_market_overview() -> dict[str, list[dict[str, Any]]]:
     return overview
 
 
+def quote_freshness(event_timestamp: str | None) -> str:
+    if not event_timestamp:
+        return "unknown"
+    try:
+        source_time = datetime.fromisoformat(event_timestamp.replace("Z", "+00:00"))
+        age_seconds = (datetime.now(timezone.utc) - source_time.astimezone(timezone.utc)).total_seconds()
+        return "stale" if age_seconds > 86400 or age_seconds < -300 else "snapshot-current"
+    except (AttributeError, TypeError, ValueError):
+        return "unknown"
+
+
 def calculate_portfolio_metrics(rows: list[sqlite3.Row]) -> dict[str, Any]:
     holdings: list[dict[str, Any]] = []
-    total_investment = 0.0
-    current_value = 0.0
+    totals: dict[str, dict[str, Decimal]] = {}
+    complete_marks = True
+
+    def amount(value: Decimal | None) -> str | None:
+        if value is None:
+            return None
+        return format(value.quantize(Decimal("0.01")), "f")
 
     for row in rows:
-        asset = fetch_market_data(row["symbol"], None, "day")
-        latest_price = safe_float(asset["price"])
-        quantity = safe_float(row["quantity"])
-        invested_amount = safe_float(row["purchase_price"]) * quantity
-        market_value = latest_price * quantity
-        total_investment += invested_amount
-        current_value += market_value
-        holdings.append(
-            {
-                "id": row["id"],
-                "symbol": asset["symbol"],
-                "market": asset["market"],
-                "currency": asset["currency"],
-                "quantity": quantity,
-                "price": round(latest_price, 4 if asset["market"] == "Forex" else 2),
-                "purchase_price": round(safe_float(row["purchase_price"]), 4),
-                "value": round(market_value, 2),
-                "change_percent": asset["change_percent"],
-                "beginner_label": (
-                    "Momentum is improving -> watch continuation"
-                    if asset["change_percent"] >= 0
-                    else "Momentum is weaker -> protect downside first"
-                ),
-            }
-        )
+        try:
+            quantity = Decimal(str(row["quantity"]))
+            unit_cost = Decimal(str(row["purchase_price"]))
+            if not quantity.is_finite() or quantity <= 0 or not unit_cost.is_finite() or unit_cost < 0:
+                raise InvalidOperation
+            cost_basis = quantity * unit_cost
+        except (InvalidOperation, ValueError, OverflowError):
+            complete_marks = False
+            continue
 
-    return {
-        "holdings": holdings,
-        "summary": {
-            "total_investment": round(total_investment, 2),
-            "current_value": round(current_value, 2),
-            "profit_loss": round(current_value - total_investment, 2),
-        },
-    }
+        asset = None
+        try:
+            asset = fetch_market_data(row["symbol"], row["asset_class"].lower() if row["asset_class"] else None, "day")
+        except Exception:
+            complete_marks = False
+        currency = (asset.get("currency") if asset else None) or row["currency"] or "UNKNOWN"
+        market = (asset.get("market") if asset else None) or row["asset_class"] or "Unknown"
+        bucket = totals.setdefault(currency, {"cost": Decimal("0"), "value": Decimal("0")})
+        bucket["cost"] += cost_basis
+        price = None
+        market_value = None
+        pnl = None
+        if asset:
+            try:
+                candidate = Decimal(str(asset["price"]))
+                if candidate.is_finite() and candidate > 0:
+                    price = candidate
+                    market_value = quantity * price
+                    pnl = market_value - cost_basis
+                    bucket["value"] += market_value
+            except (InvalidOperation, ValueError, KeyError, OverflowError):
+                pass
+        event_timestamp = asset.get("event_timestamp") if asset else None
+        freshness = quote_freshness(event_timestamp) if asset else "unavailable"
+        if asset and freshness != "snapshot-current":
+            complete_marks = False
+        if market_value is None:
+            complete_marks = False
+        holdings.append({
+            "id": row["id"], "symbol": asset["symbol"] if asset else row["symbol"],
+            "market": market, "currency": currency, "quantity": str(quantity),
+            "price": str(price) if price is not None else None,
+            "average_entry": str(unit_cost), "purchase_price": str(unit_cost),
+            "cost_basis": str(cost_basis), "value": str(market_value) if market_value is not None else None,
+            "unrealized_pnl": str(pnl) if pnl is not None else None,
+            "change_percent": asset.get("change_percent") if asset else None,
+            "source": asset.get("source", "Unavailable") if asset else "Unavailable",
+            "data_status": asset.get("data_status", "unavailable") if asset else "unavailable",
+            "freshness": freshness,
+            "event_timestamp": event_timestamp,
+            "last_received_at": asset.get("last_received_at") if asset else None,
+        })
+
+    single_currency = len(totals) <= 1 and "UNKNOWN" not in totals
+    only_bucket = next(iter(totals.values()), {"cost": Decimal("0"), "value": Decimal("0")})
+    complete = complete_marks and single_currency
+    by_currency = {currency: {"cost_basis": amount(values["cost"]),
+                              "market_value": amount(values["value"]) if complete_marks else None,
+                              "unrealized_pnl": amount(values["value"] - values["cost"]) if complete_marks else None}
+                   for currency, values in totals.items()}
+    return {"holdings": holdings,
+            "summary": {"total_investment": amount(only_bucket["cost"]) if single_currency else None,
+                        "current_value": amount(only_bucket["value"]) if complete else None,
+                        "profit_loss": amount(only_bucket["value"] - only_bucket["cost"]) if complete else None,
+                        "currency": next(iter(totals), "USD") if single_currency else None,
+                        "totals_by_currency": by_currency,
+                        "valuation_status": "complete" if complete else "partial_or_multi_currency",
+                        "cash_balance": None, "equity": None, "buying_power": None,
+                        "account_source": "local portfolio records; not broker-synced",
+                        "realized_pnl": None}}
 
 
 def generate_portfolio_prediction(portfolio: dict[str, Any]) -> dict[str, str]:
@@ -760,9 +963,97 @@ def generate_portfolio_prediction(portfolio: dict[str, Any]) -> dict[str, str]:
         return fallback
 
 
+@app.get("/health")
+def health_check():
+    import sys
+    return jsonify({
+        "status": "ok",
+        "service": "alphascope",
+        "db_backend": database_backend(),
+        "python": sys.version.split()[0],
+    })
+
+
+@app.get("/auth/csrf")
+def auth_csrf():
+    return jsonify({"csrf_token": g.csrf_token})
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "GET":
+        return render_template("auth.html", mode="register", error="", csrf_token=g.csrf_token)
+    if not csrf_is_valid():
+        return auth_error("Form expired. Reload the page and try again.", 400)
+    data = request.get_json(silent=True) or request.form
+    email, password = str(data.get("email", "")).strip().casefold(), str(data.get("password", ""))
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254 or not 12 <= len(password) <= 256:
+        return auth_error("Enter a valid email and a password between 12 and 256 characters.", 400)
+    import uuid
+    with get_connection() as connection:
+        if rate_limited(connection):
+            return auth_error("Too many attempts. Try again in 15 minutes.", 429)
+        if connection.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            record_auth_failure(connection)
+            return auth_error("Unable to create an account with those details.", 400)
+        user_id, account_id = str(uuid.uuid4()), str(uuid.uuid4())
+        try:
+            connection.execute("INSERT INTO users(id, email, password_hash) VALUES (?, ?, ?)",
+                               (user_id, email, generate_password_hash(password)))
+            connection.execute("INSERT INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (account_id, user_id))
+            connection.execute("INSERT INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (str(uuid.uuid4()), account_id))
+            token = rotate_session(connection, user_id)
+        except sqlite3.IntegrityError:
+            record_auth_failure(connection)
+            return auth_error("Unable to create an account with those details.", 400)
+    response = jsonify({"success": True, "redirect": "/"}) if request.is_json else redirect("/")
+    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_SESSION_SECONDS, httponly=True,
+                        secure=app.config["SESSION_COOKIE_SECURE"], samesite="Lax", path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
+    return response
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return render_template("auth.html", mode="login", error="", csrf_token=g.csrf_token)
+    if not csrf_is_valid():
+        return auth_error("Form expired. Reload the page and try again.", 400)
+    data = request.get_json(silent=True) or request.form
+    email, password = str(data.get("email", "")).strip().casefold(), str(data.get("password", ""))
+    with get_connection() as connection:
+        if rate_limited(connection):
+            return auth_error("Too many attempts. Try again in 15 minutes.", 429)
+        user = connection.execute("SELECT id, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+        if len(password) > 256 or not user or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
+            record_auth_failure(connection)
+            return auth_error("Email or password is incorrect.", 401)
+        token = rotate_session(connection, user["id"])
+    response = jsonify({"success": True, "redirect": "/"}) if request.is_json else redirect("/")
+    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_SESSION_SECONDS, httponly=True,
+                        secure=app.config["SESSION_COOKIE_SECURE"], samesite="Lax", path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
+    return response
+
+
+@app.post("/logout")
+def logout():
+    if not g.user_id or not csrf_is_valid():
+        return jsonify({"success": False, "message": "Authentication or request token is invalid."}), 401
+    with get_connection() as connection:
+        connection.execute("DELETE FROM auth_sessions WHERE session_hash = ?", (g.session_hash,))
+    response = redirect("/login")
+    response.delete_cookie(AUTH_COOKIE, path="/", domain=app.config["SESSION_COOKIE_DOMAIN"])
+    return response
+
+
 @app.route("/")
 def index() -> str:
-    return render_template("index.html", default_symbol=DEFAULT_SYMBOL)
+    if not g.user_id:
+        return redirect("/login")
+    market_socket_url = os.getenv("MARKET_WS_URL", "")
+    if not market_socket_url and not (os.getenv("RENDER") or os.getenv("VERCEL")) and os.getenv("APCA_API_KEY_ID") and os.getenv("APCA_API_SECRET_KEY"):
+        market_socket_url = "ws://localhost:8765"
+    return render_template("index.html", default_symbol=DEFAULT_SYMBOL, csrf_token=g.csrf_token,
+                           market_socket_url=market_socket_url)
 
 
 @app.route("/get_stock_data")
@@ -784,34 +1075,380 @@ def get_market_overview() -> Any:
         return jsonify({"success": False, "message": str(error)}), 400
 
 
-@app.route("/add_stock", methods=["POST"])
-def add_stock() -> Any:
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip()
-    market = str(data.get("market", "")).strip().lower() or None
-    quantity = safe_float(data.get("quantity"))
-    if not symbol or quantity <= 0:
-        return jsonify({"success": False, "message": "Provide a valid asset symbol and quantity."}), 400
+@app.route("/api/macro")
+def macro_dashboard() -> Any:
+    # FRED requires a registered key. Without one we explicitly return the
+    # unavailable state; no placeholder observations or calendar events.
+    series = []
+    for sid in ("CPIAUCSL", "FEDFUNDS", "UNRATE", "GDP", "DGS10"):
+        try:
+            series.append(fetch_fred_series(sid, os.getenv("FRED_API_KEY")))
+        except requests.RequestException:
+            series.append({"series_id": sid, "status": "unavailable", "observations": [],
+                           "message": "FRED could not be reached. Retry later."})
+        except (ValueError, TypeError):
+            series.append({"series_id": sid, "status": "unavailable", "observations": [],
+                           "message": "FRED returned an invalid response."})
+    return jsonify({"success": True, "source": "FRED / Federal Reserve Bank of St. Louis", "data": series,
+                    "events": {"status": "unavailable", "message": "No free, verified event calendar is configured. See official FOMC calendar and BEA/BLS release calendars."},
+                    "official_calendars": ["https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "https://www.bea.gov/news", "https://www.bls.gov/schedule/news_release/"]})
 
+
+@app.route("/api/news")
+def news_feed() -> Any:
+    query = request.args.get("q", DEFAULT_SYMBOL).strip()[:80]
+    market = request.args.get("market", "US").strip()[:20]
+    if not query:
+        return jsonify({"success": False, "message": "Provide a search term."}), 400
     try:
-        asset = fetch_market_data(symbol, market, "day")
+        items = fetch_news_items(query, market, session=create_http_session())
+        return jsonify({"success": True, "status": "available" if items else "empty", "source": "Google News RSS; publisher links retained", "data": items})
+    except (requests.RequestException, ValueError, ET.ParseError):
+        return jsonify({"success": True, "status": "unavailable", "source": "Google News RSS", "data": []})
+
+
+@app.route("/api/move-analysis")
+def move_analysis() -> Any:
+    symbol = request.args.get("symbol", DEFAULT_SYMBOL)
+    market = request.args.get("market")
+    range_key = request.args.get("range", "day")
+    try:
+        asset = fetch_market_data(symbol, market, range_key)
+        result = analyze_move(asset["history"]["points"], asset.get("source", "Unknown snapshot source"), asset.get("news", []))
+        return jsonify({"success": True, "data": result})
     except Exception as error:
         return jsonify({"success": False, "message": str(error)}), 400
 
+
+@app.route("/add_stock", methods=["POST"])
+def add_stock() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your portfolio."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip()
+    market = str(data.get("market", "")).strip().lower() or infer_market_for_symbol(symbol)
+    try:
+        quantity = Decimal(str(data.get("quantity", "")))
+        if not quantity.is_finite() or quantity <= 0 or quantity > Decimal("1000000000000") or quantity.as_tuple().exponent < -8:
+            raise InvalidOperation
+    except (InvalidOperation, ValueError):
+        return jsonify({"success": False, "message": "Quantity must be a positive decimal with at most 8 fractional digits."}), 400
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if not idempotency_key or len(idempotency_key) > 128:
+        return jsonify({"success": False, "message": "A valid Idempotency-Key header is required."}), 400
+    if not symbol:
+        return jsonify({"success": False, "message": "Provide a valid asset symbol and quantity."}), 400
+
+    try:
+        asset = validated_trade_asset(symbol, market)
+    except Exception as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+
+    try:
+        with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT id, symbol, quantity FROM account_holdings WHERE account_id = ? AND idempotency_key = ?", (g.account_id, idempotency_key)).fetchone()
+            if existing:
+                connection.commit()
+                if existing["symbol"] != asset["symbol"] or Decimal(existing["quantity"]) != quantity:
+                    return jsonify({"success": False, "message": "This Idempotency-Key was already used for a different holding."}), 409
+                return jsonify({"success": True, "message": "This holding was already recorded.", "id": existing["id"]})
+            import uuid
+            holding_id = str(uuid.uuid4())
+            connection.execute("INSERT INTO account_holdings(id, account_id, symbol, quantity, purchase_price, idempotency_key, created_at, currency, asset_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (holding_id, g.account_id, asset["symbol"], str(quantity), str(Decimal(str(asset["price"]))), idempotency_key, datetime.now(timezone.utc).isoformat(), asset.get("currency", "USD"), asset.get("market", "US")))
+            connection.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "message": "This request was already recorded."}), 409
+    return jsonify({"success": True, "id": holding_id, "message": f"{asset['symbol']} added to portfolio."})
+
+
+def primary_portfolio(connection: sqlite3.Connection, account_id: str) -> str | None:
+    row = connection.execute("SELECT id FROM portfolios WHERE account_id = ? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
+    return row["id"] if row else None
+
+
+def ensure_instrument(connection: sqlite3.Connection, asset: dict[str, Any]) -> str:
+    symbol, asset_class, exchange = asset["symbol"], asset["market"], asset.get("exchange")
+    row = connection.execute("SELECT id FROM instruments WHERE symbol = ? AND asset_class = ? AND COALESCE(exchange, '') = COALESCE(?, '')",
+                             (symbol, asset_class, exchange)).fetchone()
+    if row:
+        return row["id"]
+    instrument_id = str(uuid.uuid4())
+    connection.execute("INSERT INTO instruments(id, symbol, asset_class, exchange, currency, provider, provider_symbol) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (instrument_id, symbol, asset_class, exchange, asset.get("currency", "USD"), "Yahoo Finance", symbol))
+    return instrument_id
+
+
+def default_watchlist(connection: sqlite3.Connection, account_id: str) -> str:
+    row = connection.execute("SELECT id FROM watchlists WHERE account_id = ? AND name = 'Default'", (account_id,)).fetchone()
+    if row:
+        return row["id"]
+    watchlist_id = str(uuid.uuid4())
+    connection.execute("INSERT INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (watchlist_id, account_id))
+    return watchlist_id
+
+
+def order_event(connection: sqlite3.Connection, order_id: str, account_id: str, status: str, detail: str) -> None:
+    connection.execute("INSERT INTO order_events(id, order_id, account_id, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                       (str(uuid.uuid4()), order_id, account_id, status, detail, datetime.now(timezone.utc).isoformat()))
+
+
+def validated_trade_asset(symbol: Any, market: Any) -> dict[str, Any]:
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z0-9^.=\-]{1,20}", symbol.strip()):
+        raise ValueError("Enter a valid supported symbol.")
+    if market not in {"us", "india", "crypto", "forex"}:
+        raise ValueError("Select a supported market.")
+    return fetch_market_data(symbol.strip(), market, "day")
+
+
+def infer_market_for_symbol(symbol: str) -> str:
+    cleaned = symbol.strip().upper()
+    if cleaned in CRYPTO_ALIASES or cleaned.endswith("-USD"):
+        return "crypto"
+    if cleaned.endswith((".NS", ".BO")) or cleaned in INDIA_PLAIN_SYMBOLS:
+        return "india"
+    if cleaned.endswith("=X") or cleaned in FOREX_ALIASES:
+        return "forex"
+    return "us"
+
+
+def parse_trade_quantity(value: Any) -> Decimal:
+    try:
+        quantity = Decimal(str(value))
+        if not quantity.is_finite() or quantity <= 0 or quantity > Decimal("1000000000000") or quantity.as_tuple().exponent < -8:
+            raise InvalidOperation
+        return quantity
+    except (InvalidOperation, ValueError):
+        raise ValueError("Quantity must be positive, finite, at most 12 digits before the decimal, and no more than 8 decimal places.")
+
+
+@app.get("/api/watchlist")
+def list_watchlist() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your watchlist."}), 401
     with get_connection() as connection:
-        connection.execute(
-            "INSERT INTO portfolio (symbol, quantity, purchase_price) VALUES (?, ?, ?)",
-            (asset["symbol"], quantity, safe_float(asset["price"])),
-        )
+        watchlist_id = default_watchlist(connection, g.account_id)
+        rows = connection.execute("SELECT i.symbol, i.asset_class, i.exchange, i.currency FROM watchlist_items w JOIN instruments i ON i.id = w.instrument_id WHERE w.watchlist_id = ? ORDER BY w.added_at DESC", (watchlist_id,)).fetchall()
         connection.commit()
-    return jsonify({"success": True, "message": f"{asset['symbol']} added to portfolio."})
+    items = []
+    for row in rows:
+        try:
+            quote = fetch_market_data(row["symbol"], row["asset_class"].lower(), "day")
+            items.append({"symbol": quote["symbol"], "name": quote["name"], "market": quote["market"], "price": quote["price"],
+                          "currency": quote["currency"], "change": quote.get("change"), "change_percent": quote["change_percent"], "source": quote["source"],
+                          "data_status": quote["data_status"], "freshness": quote.get("freshness", quote_freshness(quote.get("event_timestamp"))), "event_timestamp": quote["event_timestamp"], "last_received_at": quote["last_received_at"]})
+        except Exception:
+            items.append({"symbol": row["symbol"], "market": row["asset_class"], "price": None, "currency": row["currency"],
+                          "source": "Unavailable", "data_status": "unavailable", "freshness": "unavailable", "event_timestamp": None, "last_received_at": None})
+    return jsonify({"success": True, "data": items, "limit": 30})
+
+
+@app.post("/api/watchlist")
+def add_watchlist_item() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your watchlist."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    payload = request.get_json(silent=True) or {}
+    try:
+        asset = validated_trade_asset(payload.get("symbol"), payload.get("market"))
+    except ValueError as error:
+        return jsonify({"success": False, "message": str(error)}), 400
+    except Exception:
+        return jsonify({"success": False, "message": "Symbol could not be verified by the available market-data source."}), 422
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        watchlist_id = default_watchlist(connection, g.account_id)
+        count = connection.execute("SELECT COUNT(*) FROM watchlist_items WHERE watchlist_id = ?", (watchlist_id,)).fetchone()[0]
+        instrument_id = ensure_instrument(connection, asset)
+        try:
+            connection.execute("INSERT INTO watchlist_items(watchlist_id, instrument_id) VALUES (?, ?)", (watchlist_id, instrument_id))
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return jsonify({"success": False, "message": "That symbol is already in your watchlist."}), 409
+        if count >= 30:
+            connection.rollback()
+            return jsonify({"success": False, "message": "Watchlist is limited to 30 instruments."}), 409
+        connection.commit()
+    return jsonify({"success": True, "message": f"{asset['symbol']} added to watchlist."}), 201
+
+
+@app.delete("/api/watchlist")
+def remove_watchlist_item() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your watchlist."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    payload = request.get_json(silent=True) or {}
+    symbol = str(payload.get("symbol", "")).strip().upper()
+    with get_connection() as connection:
+        deleted = connection.execute("DELETE FROM watchlist_items WHERE watchlist_id IN (SELECT id FROM watchlists WHERE account_id = ? AND name = 'Default') AND instrument_id IN (SELECT id FROM instruments WHERE symbol = ?)", (g.account_id, symbol))
+        connection.commit()
+    if deleted.rowcount == 0:
+        return jsonify({"success": False, "message": "Watchlist symbol not found."}), 404
+    return jsonify({"success": True, "message": f"{symbol} removed from watchlist."})
+
+
+@app.post("/api/orders/preview")
+def preview_order() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to create an order preview."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    payload = request.get_json(silent=True) or {}
+    key = request.headers.get("Idempotency-Key", "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
+        return jsonify({"success": False, "message": "Provide a valid Idempotency-Key."}), 400
+    side, order_type, market = payload.get("side"), payload.get("order_type"), payload.get("market")
+    if side not in {"buy", "sell"} or order_type not in {"market", "limit"}:
+        return jsonify({"success": False, "message": "Supported actions are buy or sell, using market or limit orders."}), 400
+    try:
+        quantity = parse_trade_quantity(payload.get("quantity"))
+        limit_price = None
+        if order_type == "limit":
+            limit_price = Decimal(str(payload.get("limit_price", "")))
+            if not limit_price.is_finite() or limit_price <= 0 or limit_price > Decimal("1000000000000") or limit_price.as_tuple().exponent < -8:
+                raise InvalidOperation
+        elif payload.get("limit_price") not in (None, ""):
+            return jsonify({"success": False, "message": "Market orders must not include a limit price."}), 400
+    except (ValueError, InvalidOperation):
+        return jsonify({"success": False, "message": "Enter a positive finite quantity and, for limit orders, a positive limit price (up to 8 decimal places)."}), 400
+    symbol = payload.get("symbol")
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z0-9^.=\-]{1,20}", symbol.strip()):
+        return jsonify({"success": False, "message": "Enter a valid supported symbol."}), 400
+    with get_connection() as connection:
+        duplicate = connection.execute("SELECT o.id, i.symbol, i.asset_class, o.side, o.order_type, o.quantity, o.limit_price, o.status, o.preview_json FROM orders o JOIN instruments i ON i.id = o.instrument_id WHERE o.account_id = ? AND o.idempotency_key = ?", (g.account_id, key)).fetchone()
+    if duplicate:
+        same = (duplicate["symbol"] == symbol.strip().upper() and duplicate["asset_class"].lower() == market and duplicate["side"] == side and duplicate["order_type"] == order_type
+                and Decimal(duplicate["quantity"]) == quantity
+                and (Decimal(duplicate["limit_price"]) if duplicate["limit_price"] else None) == limit_price)
+        if not same:
+            return jsonify({"success": False, "message": "This Idempotency-Key was already used for a different order."}), 409
+        return jsonify({"success": True, "order_id": duplicate["id"], "status": duplicate["status"],
+                        "preview": json.loads(duplicate["preview_json"] or "{}"), "idempotent_replay": True,
+                        "confirmation_required": duplicate["status"] == "draft"})
+    try:
+        asset = validated_trade_asset(symbol, market)
+        reference_price = Decimal(str(asset["price"]))
+        if not reference_price.is_finite() or reference_price <= 0:
+            raise ValueError
+    except (ValueError, InvalidOperation):
+        return jsonify({"success": False, "message": "Order preview requires a valid positive reference price."}), 422
+    except Exception:
+        return jsonify({"success": False, "message": "Market data is unavailable; no order preview was created."}), 503
+    if side == "sell":
+        with get_connection() as connection:
+            holding_rows = connection.execute("SELECT quantity FROM account_holdings WHERE account_id = ? AND UPPER(symbol) = ?", (g.account_id, asset["symbol"])).fetchall()
+            pending = connection.execute("SELECT quantity FROM orders o JOIN instruments i ON i.id = o.instrument_id WHERE o.account_id = ? AND i.symbol = ? AND o.side = 'sell' AND o.status = 'accepted'", (g.account_id, asset["symbol"])).fetchall()
+        available = sum((Decimal(row["quantity"]) for row in holding_rows), Decimal("0")) - sum((Decimal(row["quantity"]) for row in pending), Decimal("0"))
+        if quantity > available:
+            return jsonify({"success": False, "message": "Simulated sell quantity exceeds locally tracked available holdings; short selling is disabled."}), 400
+    portfolio_id = None
+    order_id = str(uuid.uuid4())
+    estimated = quantity * (limit_price if limit_price is not None else reference_price)
+    preview = {"symbol": asset["symbol"], "name": asset["name"], "market": asset["market"], "side": side,
+               "order_type": order_type, "quantity": str(quantity), "limit_price": str(limit_price) if limit_price is not None else None,
+               "reference_price": str(reference_price), "estimated_notional": str(estimated), "currency": asset["currency"],
+               "price_source": asset["source"], "price_status": asset["data_status"], "price_timestamp": asset["event_timestamp"],
+               "last_received_at": asset["last_received_at"], "execution_mode": "local_simulator", "fill_status": "not_filled"}
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        portfolio_id = primary_portfolio(connection, g.account_id)
+        if not portfolio_id:
+            connection.rollback()
+            return jsonify({"success": False, "message": "No portfolio is available for this account."}), 409
+        instrument_id = ensure_instrument(connection, asset)
+        try:
+            connection.execute("INSERT INTO orders(id, account_id, portfolio_id, instrument_id, idempotency_key, side, order_type, quantity, limit_price, status, provider, created_at, updated_at, preview_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'local_simulator', ?, ?, ?)",
+                               (order_id, g.account_id, portfolio_id, instrument_id, key, side, order_type, str(quantity), str(limit_price) if limit_price is not None else None, now, now, json.dumps(preview)))
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return jsonify({"success": False, "message": "Order already exists for this request."}), 409
+        order_event(connection, order_id, g.account_id, "draft", "Reference-price preview created; no order has been submitted.")
+        connection.commit()
+    return jsonify({"success": True, "order_id": order_id, "status": "draft", "preview": preview,
+                    "confirmation_required": True, "idempotent_replay": False}), 201
+
+
+@app.post("/api/orders/<order_id>/confirm")
+def confirm_order(order_id: str) -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to confirm an order."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    payload = request.get_json(silent=True) or {}
+    if payload.get("confirmed") is not True:
+        return jsonify({"success": False, "message": "Explicit order confirmation is required."}), 400
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        order = connection.execute("SELECT id, status, provider FROM orders WHERE id = ? AND account_id = ?", (order_id, g.account_id)).fetchone()
+        if not order:
+            connection.rollback()
+            return jsonify({"success": False, "message": "Order not found."}), 404
+        if order["status"] == "accepted" and order["provider"] == "local_simulator":
+            connection.commit()
+            return jsonify({"success": True, "status": "accepted", "fill_status": "not_filled", "message": "Already accepted by the local simulator; no fill or balance change occurred."})
+        if order["status"] != "draft" or order["provider"] != "local_simulator":
+            connection.rollback()
+            return jsonify({"success": False, "message": "Order is not a confirmable local-simulator draft."}), 409
+        connection.execute("UPDATE orders SET status = 'accepted', submitted_at = ?, updated_at = ? WHERE id = ? AND account_id = ?", (now, now, order_id, g.account_id))
+        order_event(connection, order_id, g.account_id, "accepted", "Accepted by the local simulator. No fill, cash movement, or position change was generated.")
+        connection.commit()
+    return jsonify({"success": True, "status": "accepted", "fill_status": "not_filled",
+                    "message": "Accepted by the local simulator. This is not a brokerage order and no fill or balance change occurred."})
+
+
+@app.post("/api/orders/<order_id>/cancel")
+def cancel_order(order_id: str) -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to cancel an order."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        order = connection.execute("SELECT status FROM orders WHERE id = ? AND account_id = ? AND provider = 'local_simulator'", (order_id, g.account_id)).fetchone()
+        if not order:
+            connection.rollback()
+            return jsonify({"success": False, "message": "Order not found."}), 404
+        if order["status"] not in {"draft", "accepted"}:
+            connection.rollback()
+            return jsonify({"success": False, "message": "This order is no longer cancellable."}), 409
+        connection.execute("UPDATE orders SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ? AND account_id = ?", (now, now, order_id, g.account_id))
+        order_event(connection, order_id, g.account_id, "cancelled", "Cancelled in the local simulator; no external order was sent.")
+        connection.commit()
+    return jsonify({"success": True, "status": "cancelled", "message": "Simulated order cancelled."})
+
+
+@app.get("/api/orders")
+def order_history() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to view order activity."}), 401
+    with get_connection() as connection:
+        rows = connection.execute("SELECT o.id, o.side, o.order_type, o.quantity, o.limit_price, o.status, o.provider, o.created_at, o.updated_at, o.preview_json, i.symbol, i.currency FROM orders o JOIN instruments i ON i.id = o.instrument_id WHERE o.account_id = ? ORDER BY o.created_at DESC LIMIT 100", (g.account_id,)).fetchall()
+        events = connection.execute("SELECT order_id, status, detail, created_at FROM order_events WHERE account_id = ? ORDER BY created_at DESC LIMIT 200", (g.account_id,)).fetchall()
+    return jsonify({"success": True,
+                    "data": [{"id": row["id"], "symbol": row["symbol"], "side": row["side"], "order_type": row["order_type"],
+                              "quantity": row["quantity"], "limit_price": row["limit_price"], "currency": row["currency"],
+                              "status": row["status"], "provider": row["provider"], "created_at": row["created_at"],
+                              "updated_at": row["updated_at"], "fill_status": "not_filled",
+                              "preview": json.loads(row["preview_json"] or "{}") } for row in rows],
+                    "events": [dict(row) for row in events]})
 
 
 @app.route("/get_portfolio")
 def get_portfolio() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your portfolio."}), 401
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT id, symbol, quantity, purchase_price, created_at FROM portfolio ORDER BY created_at DESC"
+            "SELECT id, symbol, quantity, purchase_price, created_at, currency, asset_class FROM account_holdings WHERE account_id = ? ORDER BY created_at DESC",
+            (g.account_id,),
         ).fetchall()
     try:
         return jsonify({"success": True, "data": calculate_portfolio_metrics(rows)})
@@ -819,10 +1456,14 @@ def get_portfolio() -> Any:
         return jsonify({"success": False, "message": str(error)}), 400
 
 
-@app.route("/delete_stock/<int:holding_id>", methods=["DELETE"])
-def delete_stock(holding_id: int) -> Any:
+@app.route("/delete_stock/<holding_id>", methods=["DELETE"])
+def delete_stock(holding_id: str) -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your portfolio."}), 401
+    if not csrf_is_valid():
+        return jsonify({"success": False, "message": "Invalid request token."}), 400
     with get_connection() as connection:
-        deleted = connection.execute("DELETE FROM portfolio WHERE id = ?", (holding_id,))
+        deleted = connection.execute("DELETE FROM account_holdings WHERE id = ? AND account_id = ?", (holding_id, g.account_id))
         connection.commit()
     if deleted.rowcount == 0:
         return jsonify({"success": False, "message": "Holding not found."}), 404
@@ -831,9 +1472,12 @@ def delete_stock(holding_id: int) -> Any:
 
 @app.route("/portfolio_predict")
 def portfolio_predict() -> Any:
+    if not g.user_id or not g.account_id:
+        return jsonify({"success": False, "message": "Sign in to access your portfolio."}), 401
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT id, symbol, quantity, purchase_price, created_at FROM portfolio ORDER BY created_at DESC"
+            "SELECT id, symbol, quantity, purchase_price, created_at, currency, asset_class FROM account_holdings WHERE account_id = ? ORDER BY created_at DESC",
+            (g.account_id,),
         ).fetchall()
     try:
         portfolio = calculate_portfolio_metrics(rows)

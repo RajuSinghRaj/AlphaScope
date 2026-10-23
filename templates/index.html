@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Space+Grotesk:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
@@ -51,7 +52,7 @@
             <div class="section-header">
                 <div>
                     <p class="eyebrow">Portfolio Workspace</p>
-                    <h3>Your Holdings Hub</h3>
+                    <h3>Local Portfolio</h3>
                 </div>
                 <button id="closePortfolio" class="theme-toggle" type="button">Close</button>
             </div>
@@ -64,29 +65,29 @@
 
             <div class="portfolio-toolbar">
                 <button id="portfolioRefresh" class="market-tab active" type="button">Refresh</button>
-                <button id="portfolioPredict" class="market-tab" type="button">Predict</button>
+                <span class="pill">Local records · not broker synced</span>
             </div>
 
             <div class="portfolio-summary">
                 <article class="glass-inner summary-card">
-                    <span>Total Investment</span>
+                    <span>Cost Basis</span>
                     <strong id="totalInvestment">--</strong>
                 </article>
                 <article class="glass-inner summary-card">
-                    <span>Current Value</span>
+                    <span>Marked Value</span>
                     <strong id="currentValue">--</strong>
                 </article>
                 <article class="glass-inner summary-card">
-                    <span>Profit / Loss</span>
+                    <span>Unrealized P&amp;L</span>
                     <strong id="profitLoss">--</strong>
                 </article>
             </div>
 
             <article id="portfolioPredictionBox" class="portfolio-prediction glass-inner">
-                <span>Portfolio Prediction</span>
-                <strong id="portfolioPredictionRisk">--</strong>
-                <p id="portfolioPredictionText">Request a prediction to get an overall portfolio read.</p>
-                <p id="portfolioPredictionAction" class="muted-line">Suggested action will appear here.</p>
+                <span>Broker balances</span>
+                <strong id="portfolioPredictionRisk">Unavailable</strong>
+                <p id="portfolioPredictionText">Cash, brokerage equity, and buying power are not connected.</p>
+                <p id="portfolioPredictionAction" class="muted-line">Realized P&amp;L is unavailable because no fills are recorded.</p>
             </article>
 
             <div id="portfolioList" class="portfolio-list"></div>
@@ -98,16 +99,17 @@
             <div class="brand-block">
                 <p class="eyebrow">AlphaScope</p>
                 <h2>Professional Multi-Market Insight Terminal</h2>
-                <p class="hero-copy">Live stocks, crypto, forex, explainable trends, and news-aware AI summaries built for real decision support.</p>
+                <p class="hero-copy">Market snapshots and selected live trades, with dated macro observations and source-linked headlines.</p>
             </div>
             <div class="topbar-actions">
                 <div class="live-status">
-                    <span class="live-dot"></span>
-                    <span id="statusMessage">Waiting for your market selection.</span>
+                    <span id="streamIndicator" class="live-dot" data-state="unknown" role="img" aria-label="Market stream status unknown" title="Market stream status unknown"></span>
+                    <span id="statusMessage" aria-live="polite">Waiting for your market selection.</span>
                 </div>
                 <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
                     <span id="themeLabel">Dark</span>
                 </button>
+                <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="theme-toggle" type="submit">Sign out</button></form>
             </div>
         </header>
 
@@ -115,7 +117,7 @@
             <div class="section-header">
                 <div>
                     <p class="eyebrow">Moving Rail</p>
-                    <h3>Live Global Tape</h3>
+                    <h3>Market Snapshot Rail</h3>
                 </div>
                 <div class="header-pills">
                     <span class="pill">Crypto</span>
@@ -130,6 +132,15 @@
             <div class="ticker-row ticker-row-reverse">
                 <div id="tickerRowBottom" class="ticker-track"></div>
             </div>
+        </section>
+
+        <section class="ticker-board glass-panel intelligence-strip">
+            <div class="section-header">
+                <div><p class="eyebrow">Macroeconomic context</p><h3>Latest observations</h3></div>
+                <span class="pill">FRED historical data · optional key</span>
+            </div>
+            <div id="macroDashboard" class="macro-grid"><p class="empty-state">Loading macro observations…</p></div>
+            <p class="muted-line">FRED observations are subject to the <a href="https://fred.stlouisfed.org/docs/api/terms_of_use.html" target="_blank" rel="noopener">FRED API terms</a>; using FRED-backed data means you agree to those terms. Observation dates are not release dates. No economic event calendar is configured. <a href="https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm" target="_blank" rel="noopener">Official FOMC calendar</a> · <a href="https://www.bea.gov/news" target="_blank" rel="noopener">BEA releases</a> · <a href="https://www.bls.gov/schedule/news_release/" target="_blank" rel="noopener">BLS releases</a></p>
         </section>
 
         <main class="dashboard-grid">
@@ -158,6 +169,7 @@
                         <input id="symbolInput" name="symbol" type="text" value="{{ default_symbol }}" placeholder="AAPL, TCS, BTC, USDINR, EURUSD">
                     </div>
                     <button class="primary-button" type="submit">Analyze</button>
+                    <button id="addCurrentWatchlist" class="market-tab" type="button">Add to watchlist</button>
                 </form>
 
                 <div class="range-toolbar">
@@ -182,7 +194,7 @@
 
                 <div class="metric-grid">
                     <article class="metric-card glass-inner">
-                        <span>Live Price</span>
+                        <span>Latest Snapshot</span>
                         <strong id="stockPrice">--</strong>
                     </article>
                     <article class="metric-card glass-inner">
@@ -225,7 +237,7 @@
                         <p class="eyebrow">Chart Station</p>
                         <h3>Price Action</h3>
                     </div>
-                    <span class="pill">Auto Refresh 5s</span>
+                    <span class="pill">Snapshot fallback: 30s</span>
                 </div>
                 <canvas id="stockChart"></canvas>
             </section>
@@ -233,8 +245,8 @@
             <section class="insight-panel glass-panel">
                 <div class="section-header">
                     <div>
-                        <p class="eyebrow">AI Insight</p>
-                        <h3>What Is Happening + Why</h3>
+                        <p class="eyebrow">Price evidence</p>
+                        <h3>Measured Move</h3>
                     </div>
                     <span id="insightSource" class="pill">Waiting</span>
                 </div>
@@ -245,7 +257,7 @@
                         <strong id="insightRisk">--</strong>
                     </article>
                     <article class="glass-inner insight-box">
-                        <span>Beginner Tip</span>
+                        <span>Evidence status</span>
                         <strong id="beginnerTip">Observe first, then decide.</strong>
                     </article>
                 </div>
@@ -255,16 +267,54 @@
                 <div class="section-header">
                     <div>
                         <p class="eyebrow">Headline Context</p>
-                        <h3>News + Sentiment</h3>
+                        <h3>News headlines</h3>
                     </div>
                 </div>
                 <div id="newsList" class="news-list"></div>
             </section>
         </main>
+
+        <section class="workflow-grid">
+            <section class="glass-panel workflow-panel">
+                <div class="section-header"><div><p class="eyebrow">Account scoped</p><h3>Watchlist</h3></div><span class="pill">Max 30 instruments</span></div>
+                <form id="watchlistForm" class="compact-form">
+                    <label>Symbol<input id="watchlistSymbol" maxlength="20" required placeholder="AAPL"></label>
+                    <label>Market<select id="watchlistMarket"><option value="us">US equities</option><option value="india">Indian equities</option><option value="crypto">Crypto</option><option value="forex">Forex</option></select></label>
+                    <button class="market-tab" type="submit">Add symbol</button>
+                </form>
+                <div id="watchlistRows" class="table-wrap"><p class="empty-state">Loading watchlist…</p></div>
+            </section>
+
+            <section class="glass-panel workflow-panel">
+                <div class="section-header"><div><p class="eyebrow">Local simulation only</p><h3>Trade ticket</h3></div><span class="pill">No brokerage connection</span></div>
+                <form id="orderForm" class="compact-form order-form">
+                    <label>Symbol<input id="orderSymbol" maxlength="20" required></label>
+                    <label>Market<select id="orderMarket"><option value="us">US equities</option><option value="india">Indian equities</option><option value="crypto">Crypto</option><option value="forex">Forex</option></select></label>
+                    <label>Action<select id="orderSide"><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
+                    <label>Order type<select id="orderType"><option value="market">Market</option><option value="limit">Limit</option></select></label>
+                    <label>Quantity<input id="orderQuantity" type="number" min="0.00000001" max="1000000000000" step="0.00000001" required></label>
+                    <label id="limitPriceLabel" hidden>Limit price<input id="orderLimitPrice" type="number" min="0.00000001" step="0.00000001"></label>
+                    <button class="primary-button" type="submit">Preview order</button>
+                </form>
+                <div id="orderPreview" class="order-preview" hidden>
+                    <p id="orderPreviewText"></p>
+                    <p class="muted-line">Reference-price estimate only. No buying-power check, execution, fill, cash movement, or position update occurs.</p>
+                    <label class="confirm-control"><input id="orderConfirmCheck" type="checkbox"> I confirm I want to add this order to the local simulator activity log.</label>
+                    <button id="confirmOrderButton" class="primary-button" type="button" disabled>Confirm simulated order</button>
+                    <button id="dismissOrderButton" class="market-tab" type="button">Discard preview</button>
+                </div>
+                <p id="orderMessage" class="muted-line" role="status" aria-live="polite">No order has been submitted.</p>
+            </section>
+        </section>
+
+        <section class="glass-panel workflow-panel activity-panel">
+            <div class="section-header"><div><p class="eyebrow">Drafts and activity</p><h3>Order activity</h3></div><button id="refreshOrders" class="market-tab" type="button">Refresh</button></div>
+            <div id="orderRows" class="table-wrap"><p class="empty-state">Loading activity…</p></div>
+        </section>
     </div>
 
     <script>
-        window.APP_CONFIG = { defaultSymbol: "{{ default_symbol }}" };
+        window.APP_CONFIG = { defaultSymbol: "{{ default_symbol }}", marketSocketUrl: {{ market_socket_url|tojson }} };
     </script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

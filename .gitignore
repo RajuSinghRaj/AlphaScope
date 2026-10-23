@@ -1,4 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
+.env
+.env.*
+!.env.example
 database/db.sqlite3
+.private_backups/
