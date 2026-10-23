@@ -248,6 +248,17 @@ def session_digest(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
 
 
+def ensure_guest_account(connection: sqlite3.Connection) -> tuple[str, str]:
+    user_id = str(uuid.uuid4())
+    account_id = str(uuid.uuid4())
+    portfolio_id = str(uuid.uuid4())
+    watchlist_id = str(uuid.uuid4())
+    connection.execute("INSERT INTO users(id) VALUES (?)", (user_id,))
+    connection.execute("INSERT INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (account_id, user_id))
+    connection.execute("INSERT INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (portfolio_id, account_id))
+    connection.execute("INSERT INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (watchlist_id, account_id))
+    return user_id, account_id
+
 @app.before_request
 def load_auth_session() -> None:
     token = request.cookies.get(AUTH_COOKIE, "")
@@ -263,20 +274,36 @@ def load_auth_session() -> None:
             token = secrets.token_hex(32)
             digest = session_digest(token)
             csrf = secrets.token_urlsafe(32)
-            connection.execute("INSERT INTO auth_sessions VALUES (?, NULL, ?, ?, ?)",
-                               (digest, csrf, now.isoformat(), (now + timedelta(seconds=AUTH_SESSION_SECONDS)).isoformat()))
+            user_id, account_id = ensure_guest_account(connection)
+            connection.execute("INSERT INTO auth_sessions VALUES (?, ?, ?, ?, ?)",
+                               (digest, user_id, csrf, now.isoformat(), (now + timedelta(seconds=AUTH_SESSION_SECONDS)).isoformat()))
+            connection.commit()
             g.new_session_cookie = token
             g.csrf_token = csrf
             g.session_hash = digest
-            g.user_id = None
+            g.user_id = user_id
+            g.account_id = account_id
         else:
             g.session_hash = session_row["session_hash"]
-            g.user_id = session_row["user_id"]
             g.csrf_token = session_row["csrf_token"]
-        g.account_id = None
-        if g.user_id:
-            row = connection.execute("SELECT id FROM accounts WHERE user_id = ? ORDER BY created_at LIMIT 1", (g.user_id,)).fetchone()
-            g.account_id = row["id"] if row else None
+            g.user_id = session_row["user_id"]
+            if not g.user_id:
+                user_id, account_id = ensure_guest_account(connection)
+                connection.execute("UPDATE auth_sessions SET user_id = ? WHERE session_hash = ?", (user_id, g.session_hash))
+                connection.commit()
+                g.user_id = user_id
+                g.account_id = account_id
+            else:
+                row = connection.execute("SELECT id FROM accounts WHERE user_id = ? ORDER BY created_at LIMIT 1", (g.user_id,)).fetchone()
+                if row:
+                    g.account_id = row["id"]
+                else:
+                    account_id = str(uuid.uuid4())
+                    connection.execute("INSERT INTO accounts(id, user_id, name) VALUES (?, ?, 'Personal')", (account_id, g.user_id))
+                    connection.execute("INSERT INTO portfolios(id, account_id, name) VALUES (?, ?, 'Main')", (str(uuid.uuid4()), account_id))
+                    connection.execute("INSERT INTO watchlists(id, account_id, name) VALUES (?, ?, 'Default')", (str(uuid.uuid4()), account_id))
+                    connection.commit()
+                    g.account_id = account_id
 
 
 @app.after_request
@@ -1142,7 +1169,14 @@ def add_stock() -> Any:
     try:
         asset = validated_trade_asset(symbol, market)
     except Exception as error:
-        return jsonify({"success": False, "message": str(error)}), 400
+        inferred = infer_market_for_symbol(symbol)
+        if inferred and inferred != market:
+            try:
+                asset = validated_trade_asset(symbol, inferred)
+            except Exception:
+                return jsonify({"success": False, "message": str(error)}), 400
+        else:
+            return jsonify({"success": False, "message": str(error)}), 400
 
     try:
         with get_connection() as connection:

@@ -95,6 +95,7 @@ const elements = {
     portfolioForm: document.getElementById("portfolioForm"),
     portfolioSymbol: document.getElementById("portfolioSymbol"),
     portfolioQuantity: document.getElementById("portfolioQuantity"),
+    portfolioMessage: document.getElementById("portfolioMessage"),
     totalInvestment: document.getElementById("totalInvestment"),
     currentValue: document.getElementById("currentValue"),
     profitLoss: document.getElementById("profitLoss"),
@@ -783,6 +784,10 @@ async function addHolding(event) {
         });
         const result = await response.json();
         elements.statusMessage.textContent = result.message || "Portfolio updated.";
+        if (elements.portfolioMessage) {
+            elements.portfolioMessage.textContent = result.message || "";
+            elements.portfolioMessage.className = result.success ? "profit" : "loss";
+        }
         if (result.success) {
             elements.portfolioForm.reset();
             await loadPortfolio();
