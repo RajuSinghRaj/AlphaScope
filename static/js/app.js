@@ -412,6 +412,9 @@ async function loadAsset() {
         elements.orderMarket.value = state.market;
         elements.watchlistSymbol.value = asset.symbol;
         elements.watchlistMarket.value = state.market;
+        document.querySelectorAll(".quick-ticker-pill").forEach((pill) => {
+            pill.classList.toggle("active", pill.dataset.symbol === asset.symbol);
+        });
         elements.stockName.textContent = `${asset.name} (${asset.symbol})`;
         elements.stockPrice.textContent = formatPrice(asset.price, asset.currency, asset.market);
         elements.stockChange.textContent = `${asset.change == null ? "" : formatPrice(asset.change, asset.currency, asset.market) + " | "}${formatPercent(asset.change_percent)}`;
@@ -869,6 +872,13 @@ function bindOverlay() {
             await loadMarketOverview();
         });
     });
+    if (elements.marketOverlay) {
+        elements.marketOverlay.addEventListener("click", (e) => {
+            if (e.target === elements.marketOverlay) {
+                elements.marketOverlay.classList.add("hidden");
+            }
+        });
+    }
 }
 
 function bindControls() {
@@ -960,10 +970,26 @@ function startAutoRefresh() {
     }, 30000);
 }
 
+function bindQuickTickers() {
+    document.querySelectorAll(".quick-ticker-pill").forEach((pill) => {
+        pill.addEventListener("click", async () => {
+            const market = pill.dataset.market || "us";
+            const symbol = pill.dataset.symbol;
+            setMarketContext(market, symbol);
+            document.querySelectorAll(".quick-ticker-pill").forEach((p) => {
+                p.classList.toggle("active", p === pill);
+            });
+            await loadAsset();
+        });
+    });
+}
+
 async function init() {
     initTheme();
+    state.sessionReady = true;
     bindOverlay();
     bindControls();
+    bindQuickTickers();
     setActiveButton(elements.marketTabs, state.market, "market");
     setActiveButton(elements.rangeButtons, state.range, "range");
     setActiveButton(elements.chartButtons, state.chartType, "chart");
@@ -972,6 +998,7 @@ async function init() {
     elements.orderMarket.value = state.market;
     elements.watchlistSymbol.value = state.symbol;
     elements.watchlistMarket.value = state.market;
+    await loadAsset();
     await loadMarketOverview();
     await loadPortfolio();
     await loadWatchlist();

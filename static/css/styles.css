@@ -883,6 +883,66 @@ button {
     color: var(--text-secondary);
 }
 
+/* Quick Tickers Strip */
+.quick-tickers-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.quick-tickers-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.quick-tickers-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.quick-tickers-pills {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+}
+
+.quick-ticker-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 11px;
+    border-radius: var(--radius-pill);
+    background: var(--panel-soft);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.16s ease;
+}
+
+.quick-ticker-pill:hover {
+    background: var(--panel);
+    border-color: var(--border-hover);
+    color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-xs);
+}
+
+.quick-ticker-pill.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.15);
+}
+
 /* Chart Control Strip */
 .chart-control-strip {
     display: flex;
