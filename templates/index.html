@@ -3,74 +3,91 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AlphaScope</title>
+    <title>AlphaScope · Professional Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Space+Grotesk:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
 </head>
-<body data-theme="dark">
+<body data-theme="light">
+    <!-- Ambient ambient glow canvas -->
     <div class="backdrop-grid"></div>
+    <div class="ambient-glow"></div>
 
+    <!-- Market Selector Modal Overlay -->
     <div id="marketOverlay" class="market-overlay">
-        <div class="overlay-card">
-            <p class="eyebrow">Choose Your Market First</p>
-            <h1>Start With The Market You Want To Analyze</h1>
-            <p class="hero-copy">Pick a market lane and the terminal will load the right default asset, feed, and context.</p>
+        <div class="overlay-card glass-panel">
+            <button type="button" class="overlay-close-btn" onclick="document.getElementById('marketOverlay').classList.add('hidden')" aria-label="Close dialog">&times;</button>
+            <div class="overlay-header">
+                <span class="pill accent">TERMINAL INITIALIZATION</span>
+                <h1>Select Market Workspace</h1>
+                <p class="hero-copy">Choose your target market lane. The terminal will initialize the real-time feed, snapshot pipeline, and asset context.</p>
+            </div>
             <div class="market-selector-grid">
+                <button class="market-choice" data-market="us" data-symbol="AAPL">
+                    <span class="choice-label">US Equities</span>
+                    <strong>Apple, NVIDIA, Microsoft</strong>
+                    <span class="choice-sub">NASDAQ / NYSE Tech &amp; Mega-cap</span>
+                </button>
                 <button class="market-choice" data-market="crypto" data-symbol="BTC-USD">
-                    <span class="choice-label">Crypto</span>
+                    <span class="choice-label">Cryptocurrency</span>
                     <strong>Bitcoin, Ethereum, Solana</strong>
+                    <span class="choice-sub">24/7 Global Digital Asset Markets</span>
                 </button>
                 <button class="market-choice" data-market="india" data-symbol="TCS.NS">
-                    <span class="choice-label">Indian Stocks</span>
+                    <span class="choice-label">Indian Equities</span>
                     <strong>TCS, Reliance, Infosys</strong>
-                </button>
-                <button class="market-choice" data-market="us" data-symbol="AAPL">
-                    <span class="choice-label">US Stocks</span>
-                    <strong>Apple, NVIDIA, Microsoft</strong>
+                    <span class="choice-sub">NSE / BSE Leaders</span>
                 </button>
                 <button class="market-choice" data-market="forex" data-symbol="USDINR=X">
-                    <span class="choice-label">Forex</span>
+                    <span class="choice-label">Forex Currencies</span>
                     <strong>USD/INR, EUR/USD, GBP/USD</strong>
+                    <span class="choice-sub">Global Foreign Exchange Pairs</span>
+                </button>
+            </div>
+            <div class="overlay-footer">
+                <button class="market-choice overlay-skip-btn" data-market="us" data-symbol="AAPL">
+                    Explore Terminal with Default (US / AAPL) &rarr;
                 </button>
             </div>
         </div>
     </div>
 
-    <button id="portfolioLauncher" class="portfolio-launcher" type="button" aria-label="Open portfolio">
-        <span class="launcher-icon">◎</span>
-        <span>Portfolio</span>
+    <!-- Floating / Header Portfolio launcher -->
+    <button id="portfolioLauncher" class="portfolio-launcher" type="button" aria-label="Open portfolio drawer">
+        <span class="launcher-icon">💼</span>
+        <span class="launcher-text">Portfolio</span>
     </button>
 
+    <!-- Slide-over Portfolio Drawer -->
     <aside id="portfolioDrawer" class="portfolio-drawer" tabindex="-1">
         <div class="portfolio-drawer-inner glass-panel">
             <div class="section-header">
                 <div>
-                    <p class="eyebrow">Portfolio Workspace</p>
-                    <h3>Local Portfolio</h3>
+                    <p class="eyebrow">PORTFOLIO WORKSPACE</p>
+                    <h3>Portfolio &amp; Holdings</h3>
                 </div>
-                <button id="closePortfolio" class="theme-toggle" type="button">Close</button>
+                <button id="closePortfolio" class="theme-toggle" type="button">Close ✕</button>
             </div>
 
             <form id="portfolioForm" class="portfolio-form">
-                <input id="portfolioSymbol" type="text" placeholder="Asset symbol">
+                <input id="portfolioSymbol" type="text" placeholder="Asset symbol (e.g. AAPL, BTC-USD)">
                 <input id="portfolioQuantity" type="number" min="0.01" step="0.01" placeholder="Quantity">
-                <button class="primary-button" type="submit">Add</button>
+                <button class="primary-button" type="submit">Add Holding</button>
             </form>
 
             <div class="portfolio-toolbar">
-                <button id="portfolioRefresh" class="market-tab active" type="button">Refresh</button>
+                <button id="portfolioRefresh" class="action-btn-outline" type="button">Refresh Prices</button>
                 <span class="pill">Local records · not broker synced</span>
             </div>
 
             <div class="portfolio-summary">
                 <article class="glass-inner summary-card">
-                    <span>Cost Basis</span>
+                    <span>Total Cost Basis</span>
                     <strong id="totalInvestment">--</strong>
                 </article>
                 <article class="glass-inner summary-card">
@@ -84,10 +101,10 @@
             </div>
 
             <article id="portfolioPredictionBox" class="portfolio-prediction glass-inner">
-                <span>Broker balances</span>
+                <span>Broker Balances</span>
                 <strong id="portfolioPredictionRisk">Unavailable</strong>
                 <p id="portfolioPredictionText">Cash, brokerage equity, and buying power are not connected.</p>
-                <p id="portfolioPredictionAction" class="muted-line">Realized P&amp;L is unavailable because no fills are recorded.</p>
+                <p id="portfolioPredictionAction" class="muted-line">Realized P&amp;L is unavailable because no broker fills are recorded.</p>
             </article>
 
             <div id="portfolioList" class="portfolio-list"></div>
@@ -95,34 +112,72 @@
     </aside>
 
     <div class="app-shell">
+        <!-- 1. Top Executive Navigation Bar -->
         <header class="topbar glass-panel">
-            <div class="brand-block">
-                <p class="eyebrow">AlphaScope</p>
-                <h2>Professional Multi-Market Insight Terminal</h2>
-                <p class="hero-copy">Market snapshots and selected live trades, with dated macro observations and source-linked headlines.</p>
-            </div>
-            <div class="topbar-actions">
-                <div class="live-status">
-                    <span id="streamIndicator" class="live-dot" data-state="unknown" role="img" aria-label="Market stream status unknown" title="Market stream status unknown"></span>
-                    <span id="statusMessage" aria-live="polite">Waiting for your market selection.</span>
+            <div class="brand-cluster">
+                <div class="brand-logo">
+                    <span class="logo-glyph">α</span>
                 </div>
-                <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
-                    <span id="themeLabel">Dark</span>
+                <div class="brand-info">
+                    <div class="brand-title-row">
+                        <span class="brand-name">AlphaScope</span>
+                        <span class="badge-pro">PRO TERMINAL</span>
+                    </div>
+                    <span class="brand-subtitle">Multi-Asset Market Intelligence</span>
+                </div>
+            </div>
+
+            <!-- Global Market Switcher Tabs -->
+            <nav class="market-tabs header-market-tabs" aria-label="Markets">
+                <button class="market-tab active" data-market="us" data-symbol="AAPL">
+                    <span class="tab-dot"></span>US
+                </button>
+                <button class="market-tab" data-market="india" data-symbol="TCS.NS">
+                    <span class="tab-dot"></span>India
+                </button>
+                <button class="market-tab" data-market="crypto" data-symbol="BTC-USD">
+                    <span class="tab-dot"></span>Crypto
+                </button>
+                <button class="market-tab" data-market="forex" data-symbol="USDINR=X">
+                    <span class="tab-dot"></span>Forex
+                </button>
+            </nav>
+
+            <!-- Global Symbol Search Input -->
+            <form id="symbolForm" class="header-search-form">
+                <div class="search-input-wrap">
+                    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input id="symbolInput" name="symbol" type="text" value="{{ default_symbol }}" placeholder="Symbol (e.g. AAPL, NVDA, BTC-USD, TCS)..." autocomplete="off">
+                </div>
+                <button class="primary-button search-button" type="submit">Analyze</button>
+            </form>
+
+            <div class="topbar-actions">
+                <div class="live-status pill-status">
+                    <span id="streamIndicator" class="live-dot" data-state="unknown" role="img" aria-label="Market stream status unknown" title="Market stream status unknown"></span>
+                    <span id="statusMessage" class="status-text" aria-live="polite">Waiting for selection...</span>
+                </div>
+                <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+                    <span class="theme-icon">◐</span>
+                    <span id="themeLabel">Light</span>
                 </button>
             </div>
         </header>
 
-        <section class="ticker-board glass-panel">
-            <div class="section-header">
-                <div>
-                    <p class="eyebrow">Moving Rail</p>
-                    <h3>Market Snapshot Rail</h3>
+        <!-- 2. Streamlined Real-Time Ticker Ribbon -->
+        <section class="ticker-board glass-panel compact-ticker-board">
+            <div class="ticker-header-bar">
+                <div class="ticker-tag">
+                    <span class="pulse-indicator"></span>
+                    <span class="eyebrow-compact">LIVE MARKET SNAPSHOT</span>
                 </div>
-                <div class="header-pills">
-                    <span class="pill">Crypto</span>
-                    <span class="pill">India</span>
-                    <span class="pill">US</span>
-                    <span class="pill">Forex</span>
+                <div class="header-pills compact-pills">
+                    <span class="pill pill-sm">Crypto</span>
+                    <span class="pill pill-sm">India (NSE)</span>
+                    <span class="pill pill-sm">US Equities</span>
+                    <span class="pill pill-sm">Forex FX</span>
                 </div>
             </div>
             <div class="ticker-row">
@@ -133,182 +188,298 @@
             </div>
         </section>
 
-        <section class="ticker-board glass-panel intelligence-strip">
-            <div class="section-header">
-                <div><p class="eyebrow">Macroeconomic context</p><h3>Latest observations</h3></div>
-                <span class="pill">FRED historical data · optional key</span>
+        <!-- 3. Primary Command Center Layout (Two-Column Modular Grid) -->
+        <div class="terminal-workspace-grid">
+            <!-- Left Primary Stage: Hero Chart + Metrics + Insights + Macro + News -->
+            <div class="workspace-main-column">
+                
+                <!-- Main Asset Hero & Interactive Chart Station -->
+                <section class="chart-panel glass-panel hero-chart-station">
+                    <!-- Asset Banner Head -->
+                    <div class="asset-hero-header">
+                        <div class="asset-identity">
+                            <div class="asset-chips">
+                                <span id="assetMarketChip" class="pill accent">US</span>
+                                <span id="heroExchange" class="sub-chip">NASDAQ</span>
+                                <span id="updateBadge" class="sub-chip">Live Snapshot</span>
+                            </div>
+                            <h2 id="stockName" class="hero-symbol-name">{{ default_symbol }}</h2>
+                        </div>
+
+                        <!-- Real-time Hero Price & Move Badge -->
+                        <div class="hero-price-cluster">
+                            <div class="hero-price-row">
+                                <span class="currency-prefix" id="currencyLabel">USD</span>
+                                <strong id="stockPrice" class="hero-price-value">--</strong>
+                            </div>
+                            <div class="hero-change-row">
+                                <span id="stockChange" class="hero-change-pill">--</span>
+                                <div class="risk-badge-wrap">
+                                    <span class="meta-label">Risk</span>
+                                    <strong id="riskLevel" class="risk-value">--</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Interactive Chart Toolbar -->
+                    <div class="chart-control-strip">
+                        <div class="toolbar-group">
+                            <span class="toolbar-label">TIMEFRAME</span>
+                            <div class="segmented-control">
+                                <button class="range-btn" data-range="hour">1H</button>
+                                <button class="range-btn active" data-range="day">1D</button>
+                                <button class="range-btn" data-range="week">1W</button>
+                                <button class="range-btn" data-range="month">1M</button>
+                                <button class="range-btn" data-range="year">1Y</button>
+                            </div>
+                        </div>
+
+                        <div class="toolbar-actions-right">
+                            <div class="toolbar-group">
+                                <span class="toolbar-label">CHART TYPE</span>
+                                <div class="segmented-control">
+                                    <button class="chart-btn active" data-chart="line">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                                        Line
+                                    </button>
+                                    <button class="chart-btn" data-chart="candlestick">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="2" x2="8" y2="22"></line><rect x="5" y="6" width="6" height="10" rx="1"></rect><line x1="16" y1="4" x2="16" y2="20"></line><rect x="13" y="8" width="6" height="7" rx="1"></rect></svg>
+                                        Candles
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button id="addCurrentWatchlist" class="action-btn-outline" type="button">
+                                <span>+</span> Watchlist
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Chart Canvas Station -->
+                    <div class="chart-canvas-wrapper">
+                        <canvas id="stockChart"></canvas>
+                    </div>
+
+                    <!-- 4-Pillar Trend & Health Indicators -->
+                    <div class="trend-strip-grid">
+                        <article class="trend-metric-card glass-inner">
+                            <div class="metric-top">
+                                <span class="metric-title">Momentum</span>
+                                <span class="metric-icon">⚡</span>
+                            </div>
+                            <strong id="trendMomentum" class="metric-value">--</strong>
+                        </article>
+                        <article class="trend-metric-card glass-inner">
+                            <div class="metric-top">
+                                <span class="metric-title">Market Control</span>
+                                <span class="metric-icon">🎯</span>
+                            </div>
+                            <strong id="trendSignal" class="metric-value">--</strong>
+                        </article>
+                        <article class="trend-metric-card glass-inner">
+                            <div class="metric-top">
+                                <span class="metric-title">Trend Health</span>
+                                <span class="metric-icon">📊</span>
+                            </div>
+                            <strong id="trendHealth" class="metric-value">--</strong>
+                        </article>
+                        <article class="trend-metric-card glass-inner">
+                            <div class="metric-top">
+                                <span class="metric-title">Market Track</span>
+                                <span class="metric-icon">🌐</span>
+                            </div>
+                            <strong id="heroMarket" class="metric-value">US</strong>
+                        </article>
+                    </div>
+                </section>
+
+                <!-- Technical Measured Move & Insight Section -->
+                <section class="insight-panel glass-panel">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">TECHNICAL REASONING &amp; EVIDENCE</p>
+                            <h3>Price Action &amp; Measured Move Analysis</h3>
+                        </div>
+                        <span id="insightSource" class="pill">Waiting</span>
+                    </div>
+                    <div class="insight-content-box">
+                        <p id="insightText" class="insight-copy">Choose a market to begin analysis.</p>
+                        <div class="insight-meta">
+                            <article class="glass-inner insight-box">
+                                <span>Risk Assessment</span>
+                                <strong id="insightRisk">--</strong>
+                            </article>
+                            <article class="glass-inner insight-box">
+                                <span>Signal Confidence</span>
+                                <strong id="beginnerTip">Observe first, then decide.</strong>
+                            </article>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Macroeconomic Context -->
+                <section class="ticker-board glass-panel intelligence-strip">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">MACROECONOMIC ENVIRONMENT</p>
+                            <h3>Federal Reserve &amp; Economic Observations</h3>
+                        </div>
+                        <span class="pill">FRED Intelligence Feed</span>
+                    </div>
+                    <div id="macroDashboard" class="macro-grid">
+                        <p class="empty-state">Loading macro observations…</p>
+                    </div>
+                    <p class="muted-line">FRED observations are subject to the <a href="https://fred.stlouisfed.org/docs/api/terms_of_use.html" target="_blank" rel="noopener">FRED API terms</a>. Official sources: <a href="https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm" target="_blank" rel="noopener">FOMC calendar</a> · <a href="https://www.bea.gov/news" target="_blank" rel="noopener">BEA</a> · <a href="https://www.bls.gov/schedule/news_release/" target="_blank" rel="noopener">BLS</a></p>
+                </section>
+
+                <!-- News Headlines Feed -->
+                <section class="news-panel glass-panel">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">MARKET HEADLINES</p>
+                            <h3>Source-Linked Real-time Wire</h3>
+                        </div>
+                    </div>
+                    <div id="newsList" class="news-list"></div>
+                </section>
             </div>
-            <div id="macroDashboard" class="macro-grid"><p class="empty-state">Loading macro observations…</p></div>
-            <p class="muted-line">FRED observations are subject to the <a href="https://fred.stlouisfed.org/docs/api/terms_of_use.html" target="_blank" rel="noopener">FRED API terms</a>; using FRED-backed data means you agree to those terms. Observation dates are not release dates. No economic event calendar is configured. <a href="https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm" target="_blank" rel="noopener">Official FOMC calendar</a> · <a href="https://www.bea.gov/news" target="_blank" rel="noopener">BEA releases</a> · <a href="https://www.bls.gov/schedule/news_release/" target="_blank" rel="noopener">BLS releases</a></p>
-        </section>
 
-        <main class="dashboard-grid">
-            <section class="analysis-panel glass-panel">
-                <div class="analysis-head">
-                    <div>
-                        <p class="eyebrow">Analysis Workspace</p>
-                        <h2 id="stockName">{{ default_symbol }}</h2>
-                        <div class="sub-meta">
-                            <span id="assetMarketChip" class="pill accent">US</span>
-                            <span id="heroExchange" class="sub-chip">NASDAQ</span>
-                            <span id="updateBadge" class="sub-chip">Waiting</span>
+            <!-- Right Execution & Watchlist Column (Command Sidebar) -->
+            <div class="workspace-side-column">
+                <!-- Order Execution Ticket (Simulated) -->
+                <section class="glass-panel order-ticket-panel">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">EXECUTION SIMULATOR</p>
+                            <h3>Trade Ticket</h3>
+                        </div>
+                        <span class="pill pill-warning">Sandbox Sim</span>
+                    </div>
+
+                    <form id="orderForm" class="executive-order-form">
+                        <div class="form-row-split">
+                            <label class="form-group">
+                                <span class="field-label">Symbol</span>
+                                <input id="orderSymbol" maxlength="20" required placeholder="AAPL">
+                            </label>
+                            <label class="form-group">
+                                <span class="field-label">Market</span>
+                                <select id="orderMarket">
+                                    <option value="us">US Equities</option>
+                                    <option value="india">Indian Equities</option>
+                                    <option value="crypto">Crypto</option>
+                                    <option value="forex">Forex</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div class="form-row-split">
+                            <label class="form-group">
+                                <span class="field-label">Action</span>
+                                <select id="orderSide" class="action-select">
+                                    <option value="buy">BUY</option>
+                                    <option value="sell">SELL</option>
+                                </select>
+                            </label>
+                            <label class="form-group">
+                                <span class="field-label">Order Type</span>
+                                <select id="orderType">
+                                    <option value="market">Market</option>
+                                    <option value="limit">Limit</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div class="form-row-split">
+                            <label class="form-group">
+                                <span class="field-label">Quantity</span>
+                                <input id="orderQuantity" type="number" min="0.00000001" max="1000000000000" step="0.00000001" placeholder="10" required>
+                            </label>
+                            <label id="limitPriceLabel" class="form-group" hidden>
+                                <span class="field-label">Limit Price</span>
+                                <input id="orderLimitPrice" type="number" min="0.00000001" step="0.00000001" placeholder="250.00">
+                            </label>
+                        </div>
+
+                        <button class="primary-button submit-order-btn" type="submit">Preview Order</button>
+                    </form>
+
+                    <div id="orderPreview" class="order-preview" hidden>
+                        <p id="orderPreviewText" class="preview-text"></p>
+                        <p class="muted-line mini-note">Reference-price estimate only. No broker execution occurs.</p>
+                        <label class="confirm-control">
+                            <input id="orderConfirmCheck" type="checkbox">
+                            <span>I confirm simulated order execution.</span>
+                        </label>
+                        <div class="order-actions-row">
+                            <button id="confirmOrderButton" class="primary-button btn-confirm" type="button" disabled>Confirm Order</button>
+                            <button id="dismissOrderButton" class="action-btn-outline" type="button">Discard</button>
                         </div>
                     </div>
-                    <div class="market-tabs">
-                        <button class="market-tab active" data-market="us" data-symbol="AAPL">US</button>
-                        <button class="market-tab" data-market="india" data-symbol="TCS.NS">India</button>
-                        <button class="market-tab" data-market="crypto" data-symbol="BTC-USD">Crypto</button>
-                        <button class="market-tab" data-market="forex" data-symbol="USDINR=X">Forex</button>
-                    </div>
-                </div>
+                    <p id="orderMessage" class="order-feedback-text" role="status" aria-live="polite">Ready for simulation.</p>
+                </section>
 
-                <form id="symbolForm" class="control-row">
-                    <div class="input-stack">
-                        <label for="symbolInput">Symbol or Pair</label>
-                        <input id="symbolInput" name="symbol" type="text" value="{{ default_symbol }}" placeholder="AAPL, TCS, BTC, USDINR, EURUSD">
-                    </div>
-                    <button class="primary-button" type="submit">Analyze</button>
-                    <button id="addCurrentWatchlist" class="market-tab" type="button">Add to watchlist</button>
-                </form>
-
-                <div class="range-toolbar">
-                    <div class="toolbar-group">
-                        <span class="toolbar-label">Timeline</span>
-                        <div class="segmented-control">
-                            <button class="range-btn" data-range="hour">Hour</button>
-                            <button class="range-btn active" data-range="day">Day</button>
-                            <button class="range-btn" data-range="week">Week</button>
-                            <button class="range-btn" data-range="month">Month</button>
-                            <button class="range-btn" data-range="year">Year</button>
+                <!-- Watchlist Monitor -->
+                <section class="glass-panel watchlist-panel">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">MONITOR</p>
+                            <h3>Watchlist</h3>
                         </div>
+                        <span class="pill">Max 30 items</span>
                     </div>
-                    <div class="toolbar-group">
-                        <span class="toolbar-label">Chart Type</span>
-                        <div class="segmented-control">
-                            <button class="chart-btn active" data-chart="line">Line</button>
-                            <button class="chart-btn" data-chart="candlestick">Candles</button>
+
+                    <form id="watchlistForm" class="compact-add-form">
+                        <input id="watchlistSymbol" maxlength="20" required placeholder="Add symbol (e.g. NVDA)">
+                        <select id="watchlistMarket">
+                            <option value="us">US</option>
+                            <option value="india">India</option>
+                            <option value="crypto">Crypto</option>
+                            <option value="forex">Forex</option>
+                        </select>
+                        <button class="primary-button btn-sm" type="submit">Add</button>
+                    </form>
+
+                    <div id="watchlistRows" class="table-wrap custom-scrollbar">
+                        <p class="empty-state">Loading watchlist…</p>
+                    </div>
+                </section>
+
+                <!-- Quick Portfolio Teaser Card -->
+                <section class="glass-panel quick-portfolio-widget">
+                    <div class="section-header">
+                        <div>
+                            <p class="eyebrow">HOLDINGS OVERVIEW</p>
+                            <h3>Portfolio Summary</h3>
                         </div>
+                        <button class="action-btn-outline btn-sm" type="button" onclick="document.getElementById('portfolioLauncher').click()">Manage</button>
                     </div>
-                </div>
-
-                <div class="metric-grid">
-                    <article class="metric-card glass-inner">
-                        <span>Latest Snapshot</span>
-                        <strong id="stockPrice">--</strong>
-                    </article>
-                    <article class="metric-card glass-inner">
-                        <span>Move</span>
-                        <strong id="stockChange">--</strong>
-                    </article>
-                    <article class="metric-card glass-inner">
-                        <span>Risk</span>
-                        <strong id="riskLevel">--</strong>
-                    </article>
-                    <article class="metric-card glass-inner">
-                        <span>Currency</span>
-                        <strong id="currencyLabel">--</strong>
-                    </article>
-                </div>
-
-                <div class="trend-grid">
-                    <article class="trend-card glass-inner">
-                        <span>Momentum</span>
-                        <strong id="trendMomentum">--</strong>
-                    </article>
-                    <article class="trend-card glass-inner">
-                        <span>Control</span>
-                        <strong id="trendSignal">--</strong>
-                    </article>
-                    <article class="trend-card glass-inner">
-                        <span>Trend Health</span>
-                        <strong id="trendHealth">--</strong>
-                    </article>
-                    <article class="trend-card glass-inner">
-                        <span>Market</span>
-                        <strong id="heroMarket">US</strong>
-                    </article>
-                </div>
-            </section>
-
-            <section class="chart-panel glass-panel">
-                <div class="section-header">
-                    <div>
-                        <p class="eyebrow">Chart Station</p>
-                        <h3>Price Action</h3>
+                    <div class="widget-summary-grid">
+                        <div class="widget-stat">
+                            <span class="stat-label">Portfolio Access</span>
+                            <span class="stat-sub">Track assets &amp; simulated P&amp;L</span>
+                        </div>
+                        <button class="primary-button btn-open-portfolio" type="button" onclick="document.getElementById('portfolioLauncher').click()">
+                            Open Portfolio Drawer ↗
+                        </button>
                     </div>
-                    <span class="pill">Snapshot fallback: 30s</span>
-                </div>
-                <canvas id="stockChart"></canvas>
-            </section>
+                </section>
+            </div>
+        </div>
 
-            <section class="insight-panel glass-panel">
-                <div class="section-header">
-                    <div>
-                        <p class="eyebrow">Price evidence</p>
-                        <h3>Measured Move</h3>
-                    </div>
-                    <span id="insightSource" class="pill">Waiting</span>
-                </div>
-                <p id="insightText" class="insight-copy">Choose a market to begin analysis.</p>
-                <div class="insight-meta">
-                    <article class="glass-inner insight-box">
-                        <span>Risk Level</span>
-                        <strong id="insightRisk">--</strong>
-                    </article>
-                    <article class="glass-inner insight-box">
-                        <span>Evidence status</span>
-                        <strong id="beginnerTip">Observe first, then decide.</strong>
-                    </article>
-                </div>
-            </section>
-
-            <section class="news-panel glass-panel">
-                <div class="section-header">
-                    <div>
-                        <p class="eyebrow">Headline Context</p>
-                        <h3>News headlines</h3>
-                    </div>
-                </div>
-                <div id="newsList" class="news-list"></div>
-            </section>
-        </main>
-
-        <section class="workflow-grid">
-            <section class="glass-panel workflow-panel">
-                <div class="section-header"><div><p class="eyebrow">Account scoped</p><h3>Watchlist</h3></div><span class="pill">Max 30 instruments</span></div>
-                <form id="watchlistForm" class="compact-form">
-                    <label>Symbol<input id="watchlistSymbol" maxlength="20" required placeholder="AAPL"></label>
-                    <label>Market<select id="watchlistMarket"><option value="us">US equities</option><option value="india">Indian equities</option><option value="crypto">Crypto</option><option value="forex">Forex</option></select></label>
-                    <button class="market-tab" type="submit">Add symbol</button>
-                </form>
-                <div id="watchlistRows" class="table-wrap"><p class="empty-state">Loading watchlist…</p></div>
-            </section>
-
-            <section class="glass-panel workflow-panel">
-                <div class="section-header"><div><p class="eyebrow">Local simulation only</p><h3>Trade ticket</h3></div><span class="pill">No brokerage connection</span></div>
-                <form id="orderForm" class="compact-form order-form">
-                    <label>Symbol<input id="orderSymbol" maxlength="20" required></label>
-                    <label>Market<select id="orderMarket"><option value="us">US equities</option><option value="india">Indian equities</option><option value="crypto">Crypto</option><option value="forex">Forex</option></select></label>
-                    <label>Action<select id="orderSide"><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
-                    <label>Order type<select id="orderType"><option value="market">Market</option><option value="limit">Limit</option></select></label>
-                    <label>Quantity<input id="orderQuantity" type="number" min="0.00000001" max="1000000000000" step="0.00000001" required></label>
-                    <label id="limitPriceLabel" hidden>Limit price<input id="orderLimitPrice" type="number" min="0.00000001" step="0.00000001"></label>
-                    <button class="primary-button" type="submit">Preview order</button>
-                </form>
-                <div id="orderPreview" class="order-preview" hidden>
-                    <p id="orderPreviewText"></p>
-                    <p class="muted-line">Reference-price estimate only. No buying-power check, execution, fill, cash movement, or position update occurs.</p>
-                    <label class="confirm-control"><input id="orderConfirmCheck" type="checkbox"> I confirm I want to add this order to the local simulator activity log.</label>
-                    <button id="confirmOrderButton" class="primary-button" type="button" disabled>Confirm simulated order</button>
-                    <button id="dismissOrderButton" class="market-tab" type="button">Discard preview</button>
-                </div>
-                <p id="orderMessage" class="muted-line" role="status" aria-live="polite">No order has been submitted.</p>
-            </section>
-        </section>
-
+        <!-- 4. Bottom Order Activity Log Panel -->
         <section class="glass-panel workflow-panel activity-panel">
-            <div class="section-header"><div><p class="eyebrow">Drafts and activity</p><h3>Order activity</h3></div><button id="refreshOrders" class="market-tab" type="button">Refresh</button></div>
-            <div id="orderRows" class="table-wrap"><p class="empty-state">Loading activity…</p></div>
+            <div class="section-header">
+                <div>
+                    <p class="eyebrow">SIMULATOR AUDIT TRAIL</p>
+                    <h3>Order Activity &amp; Executions</h3>
+                </div>
+                <button id="refreshOrders" class="action-btn-outline" type="button">Refresh Activity</button>
+            </div>
+            <div id="orderRows" class="table-wrap custom-scrollbar">
+                <p class="empty-state">Loading activity…</p>
+            </div>
         </section>
     </div>
 

@@ -170,8 +170,8 @@ function setTheme(theme) {
 }
 
 function initTheme() {
-    const saved = localStorage.getItem("afip-theme") || "dark";
-    setTheme(themes.includes(saved) ? saved : "dark");
+    const saved = localStorage.getItem("afip-theme") || "light";
+    setTheme(themes.includes(saved) ? saved : "light");
 }
 
 function setActiveButton(group, value, attr) {
@@ -203,7 +203,8 @@ function togglePortfolioDrawer(show) {
 }
 
 function getChartColors() {
-    const dark = document.body.getAttribute("data-theme") === "dark";
+    const theme = document.body.getAttribute("data-theme") || "light";
+    const dark = theme === "dark" || theme === "graphite" || theme === "emerald";
     return {
         line: dark ? "#6ee7ff" : "#1d4ed8",
         fill: dark ? "rgba(110, 231, 255, 0.12)" : "rgba(29, 78, 216, 0.12)",
